@@ -1,10 +1,10 @@
 /**
- * @file    cs_jdps.c
- * @brief   JDPS: joint Doppler + AGC phase compensation for multi-subevent CS.
- *          See cs_jdps.h for the interface and docs/multi_subevent_agc_design.md
+ * @file    jdps.c
+ * @brief   JDPS: joint Doppler + AGC phase compensation for multi-segment carrier-phase ranging.
+ *          See jdps.h for the interface and docs/multi_subevent_agc_design.md
  *          for the derivation.
  */
-#include "cs_jdps.h"
+#include "jdps.h"
 
 #include <math.h>
 #include <string.h>
@@ -15,9 +15,6 @@
 #define JDPS_PI               3.14159265358979f
 #define JDPS_TWO_PI           6.28318530717959f
 #define JDPS_LIGHT_SPEED      299792458.0f
-#define JDPS_CH0_FREQ_HZ      2402.0e6f          /* CS channel 0              */
-#define JDPS_CH_SPACING_HZ    1.0e6f
-#define JDPS_CENTER_FREQ_HZ   2440.0e6f          /* only used for numerics    */
 /* round-trip phase per (Hz * m): 4*pi/c                                    */
 #define JDPS_K_ROUND_TRIP     (4.0f * JDPS_PI / JDPS_LIGHT_SPEED)
 /* re-normalise recursive rotators every N grid points (float drift)       */
@@ -26,58 +23,60 @@
 /* ------------------------------------------------------------------------- */
 /* Complex helpers                                                           */
 /* ------------------------------------------------------------------------- */
-static inline cs_cplx_t cplx(float re, float im)
+static inline jdps_cplx_t cplx(float re, float im)
 {
-    cs_cplx_t z = { re, im };
+    jdps_cplx_t z = { re, im };
     return z;
 }
 
-static inline cs_cplx_t cplx_mul(cs_cplx_t a, cs_cplx_t b)
+static inline jdps_cplx_t cplx_mul(jdps_cplx_t a, jdps_cplx_t b)
 {
     return cplx(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
 }
 
 /** a * conj(b) */
-static inline cs_cplx_t cplx_mul_conj(cs_cplx_t a, cs_cplx_t b)
+static inline jdps_cplx_t cplx_mul_conj(jdps_cplx_t a, jdps_cplx_t b)
 {
     return cplx(a.re * b.re + a.im * b.im, a.im * b.re - a.re * b.im);
 }
 
-static inline cs_cplx_t cplx_conj(cs_cplx_t a)
+static inline jdps_cplx_t cplx_conj(jdps_cplx_t a)
 {
     return cplx(a.re, -a.im);
 }
 
-static inline float cplx_abs(cs_cplx_t a)
+static inline float cplx_abs(jdps_cplx_t a)
 {
     return sqrtf(a.re * a.re + a.im * a.im);
 }
 
 /** a / |a|; returns 1+0j for a == 0 */
-static inline cs_cplx_t cplx_unit(cs_cplx_t a)
+static inline jdps_cplx_t cplx_unit(jdps_cplx_t a)
 {
     float mag = cplx_abs(a);
     return (mag > 0.0f) ? cplx(a.re / mag, a.im / mag) : cplx(1.0f, 0.0f);
 }
 
 /** exp(j*phase), phase wrapped to [-pi, pi] first for accuracy of sinf/cosf */
-static inline cs_cplx_t cplx_expj(float phase)
+static inline jdps_cplx_t cplx_expj(float phase)
 {
     phase -= JDPS_TWO_PI * rintf(phase / JDPS_TWO_PI);
     return cplx(cosf(phase), sinf(phase));
 }
 
-static inline float chan_freq_hz(uint8_t chan_idx)
+static inline float chan_freq_hz(const jdps_cfg_t *cfg, uint8_t chan_idx)
 {
-    return JDPS_CH0_FREQ_HZ + (float)chan_idx * JDPS_CH_SPACING_HZ;
+    return cfg->chan0_freq_hz + (float)chan_idx * cfg->chan_spacing_hz;
 }
 
 /* ------------------------------------------------------------------------- */
 /* Public: default configuration                                             */
 /* ------------------------------------------------------------------------- */
-cs_jdps_cfg_t cs_jdps_default_cfg(void)
+jdps_cfg_t jdps_default_cfg(void)
 {
-    cs_jdps_cfg_t cfg;
+    jdps_cfg_t cfg;
+    cfg.chan0_freq_hz   = 2402.0e6f;       /* BLE CS channel 0 */
+    cfg.chan_spacing_hz = 1.0e6f;
     cfg.v_max_mps       = 10.0f;
     cfg.v_step_mps      = 0.25f;
     cfg.num_orders      = 2u;
@@ -91,7 +90,7 @@ cs_jdps_cfg_t cs_jdps_default_cfg(void)
 /* Step 0: time reference                                                    */
 /* ------------------------------------------------------------------------- */
 /** Reference time t_ref = mean step time; the output distance refers to it. */
-static float calc_ref_time(const cs_jdps_meas_t *meas)
+static float calc_ref_time(const jdps_meas_t *meas)
 {
     float sum = 0.0f;
     for (uint8_t n = 0; n < meas->num_steps; n++) {
@@ -100,20 +99,20 @@ static float calc_ref_time(const cs_jdps_meas_t *meas)
     return sum / (float)meas->num_steps;
 }
 
-/** Mean of (t - t_ref) per subevent; removed from the search phase to keep it small. */
-static void calc_se_mean_time(const cs_jdps_meas_t *meas, float t_ref, float *se_mean_tau)
+/** Mean of (t - t_ref) per segment; removed from the search phase to keep it small. */
+static void calc_seg_mean_time(const jdps_meas_t *meas, float t_ref, float *seg_mean_tau)
 {
-    uint8_t count[CS_JDPS_MAX_SE] = { 0 };
-    for (uint8_t k = 0; k < meas->num_se; k++) {
-        se_mean_tau[k] = 0.0f;
+    uint8_t count[JDPS_MAX_SEG] = { 0 };
+    for (uint8_t k = 0; k < meas->num_seg; k++) {
+        seg_mean_tau[k] = 0.0f;
     }
     for (uint8_t n = 0; n < meas->num_steps; n++) {
-        se_mean_tau[meas->se_idx[n]] += meas->step_time_s[n] - t_ref;
-        count[meas->se_idx[n]]++;
+        seg_mean_tau[meas->seg_idx[n]] += meas->step_time_s[n] - t_ref;
+        count[meas->seg_idx[n]]++;
     }
-    for (uint8_t k = 0; k < meas->num_se; k++) {
+    for (uint8_t k = 0; k < meas->num_seg; k++) {
         if (count[k] != 0u) {
-            se_mean_tau[k] /= (float)count[k];
+            seg_mean_tau[k] /= (float)count[k];
         }
     }
 }
@@ -123,53 +122,61 @@ static void calc_se_mean_time(const cs_jdps_meas_t *meas, float t_ref, float *se
 /* ------------------------------------------------------------------------- */
 /**
  * Pair (lo, hi) with chan[hi] = chan[lo] + order, order = 1..num_orders.
- * Group id = ((order-1)*K + se[lo])*K + se[hi].
+ * Group id = ((order-1)*K + seg[lo])*K + seg[hi].
  * Pair rate alpha = 4*pi/c * (f_hi*tau_hi - f_lo*tau_lo) minus its group-common
- * part 4*pi/c * f_c * (mean_tau[se_hi] - mean_tau[se_lo]) (does not change |group sum|,
- * keeps float32 values small).
+ * part 4*pi/c * f_ref * (mean_tau[seg_hi] - mean_tau[seg_lo]) (does not change
+ * |group sum|, keeps float32 values small). f_ref = mean measured frequency.
  */
-static void build_pairs(const cs_jdps_cfg_t *cfg, const cs_jdps_meas_t *meas,
-                        float t_ref, cs_jdps_work_t *work)
+static void build_pairs(const jdps_cfg_t *cfg, const jdps_meas_t *meas,
+                        float t_ref, jdps_work_t *work)
 {
-    int16_t step_of_chan[CS_JDPS_NUM_CHANNELS];
-    float   se_mean_tau[CS_JDPS_MAX_SE];
-    const uint8_t num_se = meas->num_se;
+    int16_t step_of_chan[JDPS_MAX_CHANNELS];
+    float   seg_mean_tau[JDPS_MAX_SEG];
+    const uint8_t num_seg = meas->num_seg;
 
     memset(step_of_chan, 0xFF, sizeof(step_of_chan));           /* -1 = unused */
     for (uint8_t n = 0; n < meas->num_steps; n++) {
         step_of_chan[meas->chan_idx[n]] = (int16_t)n;
     }
-    calc_se_mean_time(meas, t_ref, se_mean_tau);
+    calc_seg_mean_time(meas, t_ref, seg_mean_tau);
+
+    /* reference frequency f_ref = frequency of the mean channel index */
+    float chan_ref = 0.0f;
+    for (uint8_t n = 0; n < meas->num_steps; n++) {
+        chan_ref += (float)meas->chan_idx[n];
+    }
+    chan_ref /= (float)meas->num_steps;
+    const float freq_ref = cfg->chan0_freq_hz + chan_ref * cfg->chan_spacing_hz;
 
     work->num_pairs = 0u;
     for (uint8_t order = 1u; order <= cfg->num_orders; order++) {
-        for (uint8_t ch = 0u; ch + order < CS_JDPS_NUM_CHANNELS; ch++) {
+        for (uint8_t ch = 0u; ch + order < JDPS_MAX_CHANNELS; ch++) {
             int16_t lo = step_of_chan[ch];
             int16_t hi = step_of_chan[ch + order];
             if (lo < 0 || hi < 0) {
                 continue;
             }
             uint16_t p     = work->num_pairs++;
-            uint8_t  se_lo = meas->se_idx[lo];
-            uint8_t  se_hi = meas->se_idx[hi];
-            /* offset frequencies from f_c: keeps f*tau products in float32 range */
-            float df_lo  = chan_freq_hz(meas->chan_idx[lo]) - JDPS_CENTER_FREQ_HZ;
-            float df_hi  = chan_freq_hz(meas->chan_idx[hi]) - JDPS_CENTER_FREQ_HZ;
+            uint8_t  seg_lo = meas->seg_idx[lo];
+            uint8_t  seg_hi = meas->seg_idx[hi];
+            /* frequencies as offsets from f_ref: keeps f*tau products accurate in float32 */
+            float df_lo  = ((float)meas->chan_idx[lo] - chan_ref) * cfg->chan_spacing_hz;
+            float df_hi  = ((float)meas->chan_idx[hi] - chan_ref) * cfg->chan_spacing_hz;
             float tau_lo = meas->step_time_s[lo] - t_ref;
             float tau_hi = meas->step_time_s[hi] - t_ref;
-            float local_dt = (tau_hi - se_mean_tau[se_hi]) - (tau_lo - se_mean_tau[se_lo]);
+            float local_dt = (tau_hi - seg_mean_tau[seg_hi]) - (tau_lo - seg_mean_tau[seg_lo]);
 
             work->pair_lo[p]    = lo;
             work->pair_hi[p]    = hi;
-            work->pair_group[p] = (uint8_t)(((order - 1u) * num_se + se_lo) * num_se + se_hi);
+            work->pair_group[p] = (uint8_t)(((order - 1u) * num_seg + seg_lo) * num_seg + seg_hi);
             work->pair_rate[p]  = JDPS_K_ROUND_TRIP *
-                                  (JDPS_CENTER_FREQ_HZ * local_dt + df_hi * tau_hi - df_lo * tau_lo);
+                                  (freq_ref * local_dt + df_hi * tau_hi - df_lo * tau_lo);
         }
     }
 }
 
 /** pair_prod[a][p] = y[a][hi] * conj(y[a][lo]) (amplitude-weighted phase difference). */
-static void calc_pair_products(const cs_jdps_meas_t *meas, cs_jdps_work_t *work)
+static void calc_pair_products(const jdps_meas_t *meas, jdps_work_t *work)
 {
     for (uint8_t a = 0; a < meas->num_ant; a++) {
         for (uint16_t p = 0; p < work->num_pairs; p++) {
@@ -180,12 +187,12 @@ static void calc_pair_products(const cs_jdps_meas_t *meas, cs_jdps_work_t *work)
 }
 
 /** group_sum[a][g] = sum of pair_prod over the pairs of group g. */
-static void calc_group_sums(const cs_jdps_meas_t *meas, cs_jdps_work_t *work, uint16_t num_groups)
+static void calc_group_sums(const jdps_meas_t *meas, jdps_work_t *work, uint16_t num_groups)
 {
     for (uint8_t a = 0; a < meas->num_ant; a++) {
-        memset(work->group_sum[a], 0, num_groups * sizeof(cs_cplx_t));
+        memset(work->group_sum[a], 0, num_groups * sizeof(jdps_cplx_t));
         for (uint16_t p = 0; p < work->num_pairs; p++) {
-            cs_cplx_t *acc = &work->group_sum[a][work->pair_group[p]];
+            jdps_cplx_t *acc = &work->group_sum[a][work->pair_group[p]];
             acc->re += work->pair_prod[a][p].re;
             acc->im += work->pair_prod[a][p].im;
         }
@@ -201,8 +208,8 @@ static void calc_group_sums(const cs_jdps_meas_t *meas, cs_jdps_work_t *work, ui
  * one complex multiply per grid point (no trigonometry in the inner loop).
  * Returns the parabolically interpolated arg-max.
  */
-static float search_velocity(const cs_jdps_cfg_t *cfg, const cs_jdps_meas_t *meas,
-                             cs_jdps_work_t *work, uint16_t num_groups)
+static float search_velocity(const jdps_cfg_t *cfg, const jdps_meas_t *meas,
+                             jdps_work_t *work, uint16_t num_groups)
 {
     const int16_t  half_points = (int16_t)lrintf(cfg->v_max_mps / cfg->v_step_mps);
     const uint16_t num_points  = (uint16_t)(2 * half_points + 1);
@@ -217,10 +224,10 @@ static float search_velocity(const cs_jdps_cfg_t *cfg, const cs_jdps_meas_t *mea
     for (uint16_t iv = 0; iv < num_points; iv++) {
         float metric = 0.0f;
         for (uint8_t a = 0; a < meas->num_ant; a++) {
-            cs_cplx_t *acc = work->group_sum[a];
-            memset(acc, 0, num_groups * sizeof(cs_cplx_t));
+            jdps_cplx_t *acc = work->group_sum[a];
+            memset(acc, 0, num_groups * sizeof(jdps_cplx_t));
             for (uint16_t p = 0; p < work->num_pairs; p++) {
-                cs_cplx_t t = cplx_mul(work->pair_prod[a][p], work->pair_rot[p]);
+                jdps_cplx_t t = cplx_mul(work->pair_prod[a][p], work->pair_rot[p]);
                 acc[work->pair_group[p]].re += t.re;
                 acc[work->pair_group[p]].im += t.im;
             }
@@ -259,12 +266,12 @@ static float search_velocity(const cs_jdps_cfg_t *cfg, const cs_jdps_meas_t *mea
 /* Step 3: Doppler + range-migration compensation                            */
 /* ------------------------------------------------------------------------- */
 /** iq[a][n] *= exp(j*4*pi/c * f_n * v * (t_n - t_ref)) */
-static void compensate_doppler(cs_jdps_meas_t *meas, float v_mps, float t_ref)
+static void compensate_doppler(const jdps_cfg_t *cfg, jdps_meas_t *meas, float v_mps, float t_ref)
 {
     for (uint8_t n = 0; n < meas->num_steps; n++) {
-        float phase = JDPS_K_ROUND_TRIP * chan_freq_hz(meas->chan_idx[n]) * v_mps *
+        float phase = JDPS_K_ROUND_TRIP * chan_freq_hz(cfg, meas->chan_idx[n]) * v_mps *
                       (meas->step_time_s[n] - t_ref);
-        cs_cplx_t rot = cplx_expj(phase);
+        jdps_cplx_t rot = cplx_expj(phase);
         for (uint8_t a = 0; a < meas->num_ant; a++) {
             meas->iq[a][n] = cplx_mul(meas->iq[a][n], rot);
         }
@@ -272,13 +279,13 @@ static void compensate_doppler(cs_jdps_meas_t *meas, float v_mps, float t_ref)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Step 4: subevent phase synchronisation                                    */
+/* Step 4: segment phase synchronisation                                    */
 /* ------------------------------------------------------------------------- */
 /**
  * Model: group_sum[a][o][k][j] ~ |.| * exp(j*(c[a][o] + psi_j - psi_k)).
  * c   : intercept (local group delay) per antenna and order,
- * psi : phase of subevent k (psi_0 = 0).
- * Phases are carried as unit phasors: se_phasor[k] = exp(j*psi_k),
+ * psi : phase of segment k (psi_0 = 0).
+ * Phases are carried as unit phasors: seg_phasor[k] = exp(j*psi_k),
  * icpt_conj[a][o] = exp(-j*c[a][o]).
  *
  * Each refinement round:
@@ -290,25 +297,25 @@ static void compensate_doppler(cs_jdps_meas_t *meas, float v_mps, float t_ref)
  *
  * @param ant_first, ant_num  antennas that share the estimated phases
  */
-static void sync_subevent_phases(const cs_jdps_cfg_t *cfg, const cs_jdps_work_t *work,
-                                 uint8_t num_se, uint8_t ant_first, uint8_t ant_num,
-                                 cs_cplx_t *se_phasor)
+static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
+                                 uint8_t num_seg, uint8_t ant_first, uint8_t ant_num,
+                                 jdps_cplx_t *seg_phasor)
 {
-    const uint8_t K = num_se;
-    cs_cplx_t icpt_conj[CS_JDPS_MAX_ANT][CS_JDPS_MAX_ORDER];
-    cs_cplx_t hmat[CS_JDPS_MAX_SE][CS_JDPS_MAX_SE];
-    cs_cplx_t x[CS_JDPS_MAX_SE];
-    cs_cplx_t x_next[CS_JDPS_MAX_SE];
+    const uint8_t K = num_seg;
+    jdps_cplx_t icpt_conj[JDPS_MAX_ANT][JDPS_MAX_ORDER];
+    jdps_cplx_t hmat[JDPS_MAX_SEG][JDPS_MAX_SEG];
+    jdps_cplx_t x[JDPS_MAX_SEG];
+    jdps_cplx_t x_next[JDPS_MAX_SEG];
 
 #define GROUP_SUM(a, o, k, j) (work->group_sum[(a)][((o) * K + (k)) * K + (j)])
 
     for (uint8_t k = 0; k < K; k++) {
-        se_phasor[k] = cplx(1.0f, 0.0f);
+        seg_phasor[k] = cplx(1.0f, 0.0f);
     }
-    /* initial intercept from intra-subevent pairs only (independent of psi) */
+    /* initial intercept from intra-segment pairs only (independent of psi) */
     for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
         for (uint8_t o = 0; o < cfg->num_orders; o++) {
-            cs_cplx_t diag = cplx(0.0f, 0.0f);
+            jdps_cplx_t diag = cplx(0.0f, 0.0f);
             for (uint8_t k = 0; k < K; k++) {
                 diag.re += GROUP_SUM(a, o, k, k).re;
                 diag.im += GROUP_SUM(a, o, k, k).im;
@@ -324,10 +331,10 @@ static void sync_subevent_phases(const cs_jdps_cfg_t *cfg, const cs_jdps_work_t 
         /* Q[k][j] (stored in hmat) */
         for (uint8_t k = 0; k < K; k++) {
             for (uint8_t j = 0; j < K; j++) {
-                cs_cplx_t q = cplx(0.0f, 0.0f);
+                jdps_cplx_t q = cplx(0.0f, 0.0f);
                 for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
                     for (uint8_t o = 0; o < cfg->num_orders; o++) {
-                        cs_cplx_t t = cplx_mul(GROUP_SUM(a, o, k, j), icpt_conj[a][o]);
+                        jdps_cplx_t t = cplx_mul(GROUP_SUM(a, o, k, j), icpt_conj[a][o]);
                         q.re += t.re;
                         q.im += t.im;
                     }
@@ -340,7 +347,7 @@ static void sync_subevent_phases(const cs_jdps_cfg_t *cfg, const cs_jdps_work_t 
         for (uint8_t k = 0; k < K; k++) {
             hmat[k][k] = cplx(2.0f * hmat[k][k].re, 0.0f);
             for (uint8_t j = k + 1u; j < K; j++) {
-                cs_cplx_t h = cplx(hmat[k][j].re + hmat[j][k].re, hmat[k][j].im - hmat[j][k].im);
+                jdps_cplx_t h = cplx(hmat[k][j].re + hmat[j][k].re, hmat[k][j].im - hmat[j][k].im);
                 hmat[k][j] = h;
                 hmat[j][k] = cplx_conj(h);
             }
@@ -357,33 +364,33 @@ static void sync_subevent_phases(const cs_jdps_cfg_t *cfg, const cs_jdps_work_t 
         }
         /* power iteration, start from current estimate x = exp(-j*psi) */
         for (uint8_t k = 0; k < K; k++) {
-            x[k] = cplx_conj(se_phasor[k]);
+            x[k] = cplx_conj(seg_phasor[k]);
         }
         for (uint8_t it = 0; it < cfg->power_iter_num; it++) {
             for (uint8_t k = 0; k < K; k++) {
-                cs_cplx_t s = cplx(0.0f, 0.0f);
+                jdps_cplx_t s = cplx(0.0f, 0.0f);
                 for (uint8_t j = 0; j < K; j++) {
-                    cs_cplx_t t = cplx_mul(hmat[k][j], x[j]);
+                    jdps_cplx_t t = cplx_mul(hmat[k][j], x[j]);
                     s.re += t.re;
                     s.im += t.im;
                 }
                 x_next[k] = cplx_unit(s);
             }
-            memcpy(x, x_next, K * sizeof(cs_cplx_t));
+            memcpy(x, x_next, K * sizeof(jdps_cplx_t));
         }
         /* exp(j*psi_k) = conj(x_k), normalised so that psi_0 = 0 */
         for (uint8_t k = 0; k < K; k++) {
-            se_phasor[k] = cplx_mul(cplx_conj(x[k]), x[0]);
+            seg_phasor[k] = cplx_mul(cplx_conj(x[k]), x[0]);
         }
         /* intercept update with all groups */
         for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
             for (uint8_t o = 0; o < cfg->num_orders; o++) {
-                cs_cplx_t s = cplx(0.0f, 0.0f);
+                jdps_cplx_t s = cplx(0.0f, 0.0f);
                 for (uint8_t k = 0; k < K; k++) {
                     for (uint8_t j = 0; j < K; j++) {
                         /* * exp(-j(psi_j - psi_k)) = * conj(u_j) * u_k */
-                        cs_cplx_t rot = cplx_mul_conj(se_phasor[k], se_phasor[j]);
-                        cs_cplx_t t   = cplx_mul(GROUP_SUM(a, o, k, j), rot);
+                        jdps_cplx_t rot = cplx_mul_conj(seg_phasor[k], seg_phasor[j]);
+                        jdps_cplx_t t   = cplx_mul(GROUP_SUM(a, o, k, j), rot);
                         s.re += t.re;
                         s.im += t.im;
                     }
@@ -396,12 +403,12 @@ static void sync_subevent_phases(const cs_jdps_cfg_t *cfg, const cs_jdps_work_t 
 }
 
 /** iq[a][n] *= exp(-j*psi[a][se_n]) */
-static void remove_subevent_phases(cs_jdps_meas_t *meas,
-                                   cs_cplx_t se_phasor[CS_JDPS_MAX_ANT][CS_JDPS_MAX_SE])
+static void remove_segment_phases(jdps_meas_t *meas,
+                                   jdps_cplx_t seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG])
 {
     for (uint8_t a = 0; a < meas->num_ant; a++) {
         for (uint8_t n = 0; n < meas->num_steps; n++) {
-            meas->iq[a][n] = cplx_mul_conj(meas->iq[a][n], se_phasor[a][meas->se_idx[n]]);
+            meas->iq[a][n] = cplx_mul_conj(meas->iq[a][n], seg_phasor[a][meas->seg_idx[n]]);
         }
     }
 }
@@ -409,74 +416,75 @@ static void remove_subevent_phases(cs_jdps_meas_t *meas,
 /* ------------------------------------------------------------------------- */
 /* Public: top level                                                         */
 /* ------------------------------------------------------------------------- */
-static int check_params(const cs_jdps_cfg_t *cfg, const cs_jdps_meas_t *meas,
-                        const cs_jdps_work_t *work)
+static int check_params(const jdps_cfg_t *cfg, const jdps_meas_t *meas,
+                        const jdps_work_t *work)
 {
     if (cfg == NULL || meas == NULL || work == NULL || meas->iq == NULL ||
-        meas->chan_idx == NULL || meas->se_idx == NULL || meas->step_time_s == NULL) {
+        meas->chan_idx == NULL || meas->seg_idx == NULL || meas->step_time_s == NULL) {
         return 0;
     }
-    if (meas->num_ant == 0u || meas->num_ant > CS_JDPS_MAX_ANT ||
-        meas->num_steps == 0u || meas->num_steps > CS_JDPS_MAX_STEPS ||
-        meas->num_se == 0u || meas->num_se > CS_JDPS_MAX_SE ||
-        cfg->num_orders == 0u || cfg->num_orders > CS_JDPS_MAX_ORDER ||
+    if (meas->num_ant == 0u || meas->num_ant > JDPS_MAX_ANT ||
+        meas->num_steps == 0u || meas->num_steps > JDPS_MAX_STEPS ||
+        meas->num_seg == 0u || meas->num_seg > JDPS_MAX_SEG ||
+        !(cfg->chan0_freq_hz > 0.0f) || !(cfg->chan_spacing_hz > 0.0f) ||
+        cfg->num_orders == 0u || cfg->num_orders > JDPS_MAX_ORDER ||
         !(cfg->v_step_mps > 0.0f) || cfg->v_max_mps < 0.0f ||
-        2L * lrintf(cfg->v_max_mps / cfg->v_step_mps) + 1L > (long)CS_JDPS_MAX_V_POINTS) {
+        2L * lrintf(cfg->v_max_mps / cfg->v_step_mps) + 1L > (long)JDPS_MAX_V_POINTS) {
         return 0;
     }
     for (uint8_t n = 0; n < meas->num_steps; n++) {
-        if (meas->chan_idx[n] >= CS_JDPS_NUM_CHANNELS || meas->se_idx[n] >= meas->num_se) {
+        if (meas->chan_idx[n] >= JDPS_MAX_CHANNELS || meas->seg_idx[n] >= meas->num_seg) {
             return 0;
         }
     }
     return 1;
 }
 
-cs_jdps_status_t cs_jdps_process(const cs_jdps_cfg_t *cfg, cs_jdps_meas_t *meas,
-                                 cs_jdps_work_t *work, cs_jdps_result_t *res)
+jdps_status_t jdps_process(const jdps_cfg_t *cfg, jdps_meas_t *meas,
+                                 jdps_work_t *work, jdps_result_t *res)
 {
-    cs_cplx_t se_phasor[CS_JDPS_MAX_ANT][CS_JDPS_MAX_SE];
+    jdps_cplx_t seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG];
 
     if (!check_params(cfg, meas, work)) {
-        return CS_JDPS_ERR_PARAM;
+        return JDPS_ERR_PARAM;
     }
-    const uint16_t num_groups = (uint16_t)(cfg->num_orders * meas->num_se * meas->num_se);
+    const uint16_t num_groups = (uint16_t)(cfg->num_orders * meas->num_seg * meas->num_seg);
     const float    t_ref      = calc_ref_time(meas);
 
     /* 1. pairs + velocity */
     build_pairs(cfg, meas, t_ref, work);
     if (work->num_pairs == 0u) {
-        return CS_JDPS_ERR_NO_PAIRS;
+        return JDPS_ERR_NO_PAIRS;
     }
     calc_pair_products(meas, work);
     const float v_hat = search_velocity(cfg, meas, work, num_groups);
 
     /* 2. Doppler + range migration */
-    compensate_doppler(meas, v_hat, t_ref);
+    compensate_doppler(cfg, meas, v_hat, t_ref);
 
-    /* 3. subevent phases from the compensated data */
+    /* 3. segment phases from the compensated data */
     calc_pair_products(meas, work);
     calc_group_sums(meas, work, num_groups);
     if (cfg->per_ant_phase) {
         for (uint8_t a = 0; a < meas->num_ant; a++) {
-            sync_subevent_phases(cfg, work, meas->num_se, a, 1u, se_phasor[a]);
+            sync_segment_phases(cfg, work, meas->num_seg, a, 1u, seg_phasor[a]);
         }
     } else {
-        sync_subevent_phases(cfg, work, meas->num_se, 0u, meas->num_ant, se_phasor[0]);
+        sync_segment_phases(cfg, work, meas->num_seg, 0u, meas->num_ant, seg_phasor[0]);
         for (uint8_t a = 1; a < meas->num_ant; a++) {
-            memcpy(se_phasor[a], se_phasor[0], meas->num_se * sizeof(cs_cplx_t));
+            memcpy(seg_phasor[a], seg_phasor[0], meas->num_seg * sizeof(jdps_cplx_t));
         }
     }
-    remove_subevent_phases(meas, se_phasor);
+    remove_segment_phases(meas, seg_phasor);
 
     if (res != NULL) {
         memset(res, 0, sizeof(*res));
         res->v_mps = v_hat;
         for (uint8_t a = 0; a < meas->num_ant; a++) {
-            for (uint8_t k = 0; k < meas->num_se; k++) {
-                res->psi_rad[a][k] = atan2f(se_phasor[a][k].im, se_phasor[a][k].re);
+            for (uint8_t k = 0; k < meas->num_seg; k++) {
+                res->psi_rad[a][k] = atan2f(seg_phasor[a][k].im, seg_phasor[a][k].re);
             }
         }
     }
-    return CS_JDPS_OK;
+    return JDPS_OK;
 }

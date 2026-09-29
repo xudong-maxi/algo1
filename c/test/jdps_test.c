@@ -1,9 +1,9 @@
 /**
- * @file    cs_jdps_test.c
- * @brief   Host test: runs cs_jdps_process() on vectors exported by
+ * @file    jdps_test.c
+ * @brief   Host test: runs jdps_process() on vectors exported by
  *          cs_agc/export_vectors.py and compares with the Python reference.
  *
- * Usage: cs_jdps_test vectors.txt
+ * Usage: jdps_test vectors.txt
  * Pass criteria per case:
  *   |v_c - v_py|                    < 0.01 m/s
  *   max wrapped |psi_c - psi_py|    < 0.01 rad
@@ -14,7 +14,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "../cs_jdps.h"
+#include "../jdps.h"
 
 #define TOL_V_MPS     0.01
 #define TOL_PSI_RAD   0.01
@@ -22,15 +22,15 @@
 
 typedef struct {
     char             name[64];
-    cs_jdps_cfg_t    cfg;
-    uint8_t          num_ant, num_steps, num_se;
-    uint8_t          chan[CS_JDPS_MAX_STEPS];
-    uint8_t          se[CS_JDPS_MAX_STEPS];
-    float            time_s[CS_JDPS_MAX_STEPS];
-    cs_cplx_t        iq[CS_JDPS_MAX_ANT][CS_JDPS_MAX_STEPS];
+    jdps_cfg_t    cfg;
+    uint8_t          num_ant, num_steps, num_seg;
+    uint8_t          chan[JDPS_MAX_STEPS];
+    uint8_t          seg[JDPS_MAX_STEPS];
+    float            time_s[JDPS_MAX_STEPS];
+    jdps_cplx_t        iq[JDPS_MAX_ANT][JDPS_MAX_STEPS];
     double           exp_v;
-    double           exp_psi[CS_JDPS_MAX_ANT][CS_JDPS_MAX_SE];
-    double           exp_iq[CS_JDPS_MAX_ANT][CS_JDPS_MAX_STEPS][2];
+    double           exp_psi[JDPS_MAX_ANT][JDPS_MAX_SEG];
+    double           exp_iq[JDPS_MAX_ANT][JDPS_MAX_STEPS][2];
 } test_case_t;
 
 static int expect_tag(FILE *fp, const char *tag)
@@ -53,6 +53,7 @@ static int read_case(FILE *fp, test_case_t *tc)
         !expect_tag(fp, "dims") || fscanf(fp, "%u %u %u", &A, &N, &K) != 3) {
         return -1;
     }
+    tc->cfg = jdps_default_cfg();      /* frequency plan: BLE CS defaults */
     tc->cfg.v_max_mps = vmax;
     tc->cfg.v_step_mps = vstep;
     tc->cfg.num_orders = (uint8_t)orders;
@@ -61,12 +62,12 @@ static int read_case(FILE *fp, test_case_t *tc)
     tc->cfg.per_ant_phase = (uint8_t)perant;
     tc->num_ant = (uint8_t)A;
     tc->num_steps = (uint8_t)N;
-    tc->num_se = (uint8_t)K;
+    tc->num_seg = (uint8_t)K;
 
     if (!expect_tag(fp, "chan")) return -1;
     for (unsigned n = 0; n < N; n++) { if (fscanf(fp, "%u", &u) != 1) return -1; tc->chan[n] = (uint8_t)u; }
     if (!expect_tag(fp, "se")) return -1;
-    for (unsigned n = 0; n < N; n++) { if (fscanf(fp, "%u", &u) != 1) return -1; tc->se[n] = (uint8_t)u; }
+    for (unsigned n = 0; n < N; n++) { if (fscanf(fp, "%u", &u) != 1) return -1; tc->seg[n] = (uint8_t)u; }
     if (!expect_tag(fp, "time")) return -1;
     for (unsigned n = 0; n < N; n++) { if (fscanf(fp, "%f", &tc->time_s[n]) != 1) return -1; }
     if (!expect_tag(fp, "iq")) return -1;
@@ -93,8 +94,8 @@ static double wrap_pi(double x)
 int main(int argc, char **argv)
 {
     static test_case_t    tc;
-    static cs_jdps_work_t work;
-    cs_jdps_result_t      res;
+    static jdps_work_t work;
+    jdps_result_t      res;
     int num_cases = 0, num_fail = 0;
     double total_us = 0.0;
 
@@ -106,17 +107,18 @@ int main(int argc, char **argv)
     printf("%-26s %9s %9s %10s %10s  %s\n", "case", "v_c", "v_py", "psi_err", "iq_relerr", "result");
     int rc;
     while ((rc = read_case(fp, &tc)) == 1) {
-        cs_jdps_meas_t meas = {
-            .num_ant = tc.num_ant, .num_steps = tc.num_steps, .num_se = tc.num_se,
-            .chan_idx = tc.chan, .se_idx = tc.se, .step_time_s = tc.time_s, .iq = tc.iq,
+        jdps_meas_t meas = {
+            .num_ant = tc.num_ant, .num_steps = tc.num_steps, .num_seg = tc.num_seg,
+            .chan_idx = tc.chan, .seg_idx = tc.seg, .step_time_s = tc.time_s, .iq = tc.iq,
         };
         clock_t t0 = clock();
-        cs_jdps_status_t st = cs_jdps_process(&tc.cfg, &meas, &work, &res);
+        memset(&res, 0, sizeof(res));
+        jdps_status_t st = jdps_process(&tc.cfg, &meas, &work, &res);
         total_us += 1e6 * (double)(clock() - t0) / CLOCKS_PER_SEC;
 
         double psi_err = 0.0, err2 = 0.0, ref2 = 0.0;
         for (unsigned a = 0; a < tc.num_ant; a++) {
-            for (unsigned k = 0; k < tc.num_se; k++) {
+            for (unsigned k = 0; k < tc.num_seg; k++) {
                 double e = fabs(wrap_pi(res.psi_rad[a][k] - tc.exp_psi[a][k]));
                 psi_err = e > psi_err ? e : psi_err;
             }
@@ -128,10 +130,14 @@ int main(int argc, char **argv)
             }
         }
         double iq_rel = sqrt(err2 / (ref2 > 0 ? ref2 : 1.0));
-        int ok = st == CS_JDPS_OK && fabs(res.v_mps - tc.exp_v) < TOL_V_MPS &&
+        int ok = st == JDPS_OK && fabs(res.v_mps - tc.exp_v) < TOL_V_MPS &&
                  psi_err < TOL_PSI_RAD && iq_rel < TOL_IQ_REL;
-        printf("%-26s %+9.4f %+9.4f %10.2e %10.2e  %s\n", tc.name, res.v_mps, tc.exp_v,
+        printf("%-26s %+9.4f %+9.4f %10.2e %10.2e  %s", tc.name, res.v_mps, tc.exp_v,
                psi_err, iq_rel, ok ? "PASS" : "FAIL");
+        if (st != JDPS_OK) {
+            printf(" (status %d)", (int)st);
+        }
+        printf("\n");
         num_cases++;
         num_fail += !ok;
     }
