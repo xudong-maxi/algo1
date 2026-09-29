@@ -268,7 +268,7 @@ def main():
             "MP_severe": dataclasses.replace(base, channel=SCENARIOS["MP_severe"]),
             "MP_mod + per-path velocity": dataclasses.replace(
                 base, channel=dataclasses.replace(SCENARIOS["MP_mod"], per_path_velocity=True)),
-            "MP_mod + 100 ms SE interval": dataclasses.replace(base, timing=TimingCfg(se_interval=0.1)),
+            "MP_mod + 100 ms SE gap": dataclasses.replace(base, timing=TimingCfg(se_gap=0.1)),
             "MP_mod + AGC per antenna": dataclasses.replace(base, agc_shared_across_ant=False),
         }
         summary["scenarios"] = {}

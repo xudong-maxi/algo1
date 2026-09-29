@@ -20,7 +20,7 @@ CS_CHANNELS = np.array([ch for ch in range(2, 77) if ch not in (23, 24, 25)])  #
 class TimingCfg:
     t_meas: float = 565e-6           # measurement duration of one step
     t_gap: float = 150e-6            # gap between steps
-    se_interval: float = 40e-3       # subevent start-to-start interval
+    se_gap: float = 40e-3            # idle gap between end of one subevent and start of the next
 
     @property
     def t_step(self):
@@ -99,7 +99,10 @@ def generate(rng, cfg: SimCfg, d0=None, v=None) -> Measurement:
     counts = split_steps(len(ch), cfg.n_se)
     se = np.repeat(np.arange(cfg.n_se), counts)
     idx_in_se = np.concatenate([np.arange(c) for c in counts])
-    t = se * tm.se_interval + idx_in_se * tm.t_step + tm.t_meas / 2
+    # subevent duration = c steps (last step has no trailing inter-step gap), then se_gap idle
+    se_dur = np.array(counts) * tm.t_step - tm.t_gap
+    se_start = np.concatenate([[0.0], np.cumsum(se_dur + tm.se_gap)[:-1]])
+    t = se_start[se] + idx_in_se * tm.t_step + tm.t_meas / 2
     t_ref = t.mean()
     f = F0 + ch * DF
 
