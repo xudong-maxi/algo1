@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+c/cs_jdps_test
+c/test/vectors.txt
