@@ -40,7 +40,7 @@
 /*
  * Complex type: taken from the host project, not defined here.
  * Required: a struct type named `complex` with float members `r` (real) and
- * `i` (imaginary). Point JDPS_COMPLEX_HEADER at the project header that
+ * `i` (imaginary), declared in that order (jdps.c initialises it as { r, i }). Point JDPS_COMPLEX_HEADER at the project header that
  * defines it (default "complex_type.h"), e.g. -DJDPS_COMPLEX_HEADER='"my_types.h"'.
  */
 #ifndef JDPS_COMPLEX_HEADER

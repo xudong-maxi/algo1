@@ -23,29 +23,21 @@
 /* ------------------------------------------------------------------------- */
 /* Complex helpers                                                           */
 /* ------------------------------------------------------------------------- */
-/** Build a complex value; assigns by member name, independent of member order. */
-static inline complex cplx(float real, float imag)
-{
-    complex z;
-    z.r = real;
-    z.i = imag;
-    return z;
-}
-
+/* complex literals are written { r, i }: relies on the project type's member order */
 static inline complex cplx_mul(complex a, complex b)
 {
-    return cplx(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
+    return (complex){ a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r };
 }
 
 /** a * conj(b) */
 static inline complex cplx_mul_conj(complex a, complex b)
 {
-    return cplx(a.r * b.r + a.i * b.i, a.i * b.r - a.r * b.i);
+    return (complex){ a.r * b.r + a.i * b.i, a.i * b.r - a.r * b.i };
 }
 
 static inline complex cplx_conj(complex a)
 {
-    return cplx(a.r, -a.i);
+    return (complex){ a.r, -a.i };
 }
 
 static inline float cplx_abs(complex a)
@@ -57,14 +49,14 @@ static inline float cplx_abs(complex a)
 static inline complex cplx_unit(complex a)
 {
     float mag = cplx_abs(a);
-    return (mag > 0.0f) ? cplx(a.r / mag, a.i / mag) : cplx(1.0f, 0.0f);
+    return (mag > 0.0f) ? (complex){ a.r / mag, a.i / mag } : (complex){ 1.0f, 0.0f };
 }
 
 /** exp(j*phase), phase wrapped to [-pi, pi] first for accuracy of sinf/cosf */
 static inline complex cplx_expj(float phase)
 {
     phase -= JDPS_TWO_PI * rintf(phase / JDPS_TWO_PI);
-    return cplx(cosf(phase), sinf(phase));
+    return (complex){ cosf(phase), sinf(phase) };
 }
 
 static inline float chan_freq_hz(const jdps_cfg_t *cfg, uint8_t chan_idx)
@@ -313,12 +305,12 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
 #define GROUP_SUM(a, o, k, j) (work->group_sum[(a)][((o) * K + (k)) * K + (j)])
 
     for (uint8_t k = 0; k < K; k++) {
-        seg_phasor[k] = cplx(1.0f, 0.0f);
+        seg_phasor[k] = (complex){ 1.0f, 0.0f };
     }
     /* initial intercept from intra-segment pairs only (independent of psi) */
     for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
         for (uint8_t o = 0; o < cfg->num_orders; o++) {
-            complex diag = cplx(0.0f, 0.0f);
+            complex diag = { 0.0f, 0.0f };
             for (uint8_t k = 0; k < K; k++) {
                 diag.r += GROUP_SUM(a, o, k, k).r;
                 diag.i += GROUP_SUM(a, o, k, k).i;
@@ -334,7 +326,7 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* Q[k][j] (stored in hmat) */
         for (uint8_t k = 0; k < K; k++) {
             for (uint8_t j = 0; j < K; j++) {
-                complex q = cplx(0.0f, 0.0f);
+                complex q = { 0.0f, 0.0f };
                 for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
                     for (uint8_t o = 0; o < cfg->num_orders; o++) {
                         complex t = cplx_mul(GROUP_SUM(a, o, k, j), icpt_conj[a][o]);
@@ -348,9 +340,9 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* H = Q + Q^H, then diagonal := max_k sum_j |H[k][j]| */
         float diag_shift = 0.0f;
         for (uint8_t k = 0; k < K; k++) {
-            hmat[k][k] = cplx(2.0f * hmat[k][k].r, 0.0f);
+            hmat[k][k] = (complex){ 2.0f * hmat[k][k].r, 0.0f };
             for (uint8_t j = k + 1u; j < K; j++) {
-                complex h = cplx(hmat[k][j].r + hmat[j][k].r, hmat[k][j].i - hmat[j][k].i);
+                complex h = { hmat[k][j].r + hmat[j][k].r, hmat[k][j].i - hmat[j][k].i };
                 hmat[k][j] = h;
                 hmat[j][k] = cplx_conj(h);
             }
@@ -363,7 +355,7 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
             diag_shift = (row_sum > diag_shift) ? row_sum : diag_shift;
         }
         for (uint8_t k = 0; k < K; k++) {
-            hmat[k][k] = cplx(diag_shift, 0.0f);
+            hmat[k][k] = (complex){ diag_shift, 0.0f };
         }
         /* power iteration, start from current estimate x = exp(-j*psi) */
         for (uint8_t k = 0; k < K; k++) {
@@ -371,7 +363,7 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         }
         for (uint8_t it = 0; it < cfg->power_iter_num; it++) {
             for (uint8_t k = 0; k < K; k++) {
-                complex s = cplx(0.0f, 0.0f);
+                complex s = { 0.0f, 0.0f };
                 for (uint8_t j = 0; j < K; j++) {
                     complex t = cplx_mul(hmat[k][j], x[j]);
                     s.r += t.r;
@@ -388,7 +380,7 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* intercept update with all groups */
         for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
             for (uint8_t o = 0; o < cfg->num_orders; o++) {
-                complex s = cplx(0.0f, 0.0f);
+                complex s = { 0.0f, 0.0f };
                 for (uint8_t k = 0; k < K; k++) {
                     for (uint8_t j = 0; j < K; j++) {
                         /* * exp(-j(psi_j - psi_k)) = * conj(u_j) * u_k */
