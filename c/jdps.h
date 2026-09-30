@@ -37,6 +37,17 @@
 
 #include <stdint.h>
 
+/*
+ * Complex type: taken from the host project, not defined here.
+ * Required: a struct type named `complex` with float members `r` (real) and
+ * `i` (imaginary). Point JDPS_COMPLEX_HEADER at the project header that
+ * defines it (default "complex_type.h"), e.g. -DJDPS_COMPLEX_HEADER='"my_types.h"'.
+ */
+#ifndef JDPS_COMPLEX_HEADER
+#define JDPS_COMPLEX_HEADER "complex_type.h"
+#endif
+#include JDPS_COMPLEX_HEADER
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,11 +68,6 @@ extern "C" {
 /* ------------------------------------------------------------------------- */
 /* Types                                                                     */
 /* ------------------------------------------------------------------------- */
-typedef struct {
-    float re;
-    float im;
-} jdps_cplx_t;
-
 typedef enum {
     JDPS_OK = 0,
     JDPS_ERR_PARAM,          /**< NULL pointer or size out of range       */
@@ -84,20 +90,20 @@ typedef struct {
 typedef struct {
     uint8_t        num_ant;     /**< antenna paths used (<= MAX_ANT)          */
     uint8_t        num_steps;   /**< ranging steps (<= MAX_STEPS)             */
-    uint8_t        num_seg;      /**< segments (<= MAX_SE)                    */
+    uint8_t        num_seg;     /**< segments (<= MAX_SEG)                    */
     const uint8_t *chan_idx;    /**< [num_steps] channel index,
                                      f = chan0_freq_hz + idx * chan_spacing_hz */
-    const uint8_t *seg_idx;      /**< [num_steps] segment id 0..num_seg-1      */
+    const uint8_t *seg_idx;     /**< [num_steps] segment id 0..num_seg-1      */
     const float   *step_time_s; /**< [num_steps] step centre time, any origin [s] */
-    jdps_cplx_t    (*iq)[JDPS_MAX_STEPS]; /**< [num_ant][..] round-trip IQ, hop order;
-                                                a missing tone must be 0+0j   */
+    complex      (*iq)[JDPS_MAX_STEPS]; /**< [num_ant][..] round-trip IQ, hop order;
+                                              a missing tone must be 0+0j   */
 } jdps_meas_t;
 
 typedef struct {
-    float v_mps;                                    /**< estimated radial velocity */
-    float psi_rad[JDPS_MAX_ANT][JDPS_MAX_SEG]; /**< removed segment phase
-                                                         (AGC + inter-segment Doppler),
-                                                         psi[.][0] = 0             */
+    float v_mps;                               /**< estimated radial velocity [m/s] */
+    float psi_rad[JDPS_MAX_ANT][JDPS_MAX_SEG]; /**< removed segment phase [rad]
+                                                    (AGC + inter-segment Doppler),
+                                                    psi[.][0] = 0                  */
 } jdps_result_t;
 
 /** Scratch memory (13.9 KB with default limits). Place it statically. */
@@ -106,10 +112,10 @@ typedef struct {
     int16_t   pair_hi[JDPS_MAX_PAIRS];            /**< higher-frequency step  */
     uint8_t   pair_group[JDPS_MAX_PAIRS];         /**< group id               */
     float     pair_rate[JDPS_MAX_PAIRS];          /**< alpha_i [rad/(m/s)]    */
-    jdps_cplx_t pair_prod[JDPS_MAX_ANT][JDPS_MAX_PAIRS]; /**< y_hi*conj(y_lo) */
-    jdps_cplx_t pair_rot[JDPS_MAX_PAIRS];           /**< exp(j*alpha*v) running */
-    jdps_cplx_t pair_rot_step[JDPS_MAX_PAIRS];      /**< exp(j*alpha*dv)        */
-    jdps_cplx_t group_sum[JDPS_MAX_ANT][JDPS_MAX_GROUPS];
+    complex   pair_prod[JDPS_MAX_ANT][JDPS_MAX_PAIRS]; /**< y_hi*conj(y_lo) */
+    complex   pair_rot[JDPS_MAX_PAIRS];           /**< exp(j*alpha*v) running */
+    complex   pair_rot_step[JDPS_MAX_PAIRS];      /**< exp(j*alpha*dv)        */
+    complex   group_sum[JDPS_MAX_ANT][JDPS_MAX_GROUPS];
     float     v_metric[JDPS_MAX_V_POINTS];
     uint16_t  num_pairs;
 } jdps_work_t;

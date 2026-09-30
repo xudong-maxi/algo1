@@ -6,8 +6,8 @@ PYTHON  ?= python3
 
 all: jdps_test
 
-jdps_test: jdps.c jdps.h test/jdps_test.c
-	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE -o $@ jdps.c test/jdps_test.c -lm
+jdps_test: jdps.c jdps.h test/jdps_test.c test/complex_type.h
+	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE -Itest -o $@ jdps.c test/jdps_test.c -lm
 
 test/vectors.txt: ../cs_agc/algorithms.py ../cs_agc/export_vectors.py
 	cd .. && $(PYTHON) -m cs_agc.export_vectors c/test/vectors.txt

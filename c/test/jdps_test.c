@@ -27,7 +27,7 @@ typedef struct {
     uint8_t          chan[JDPS_MAX_STEPS];
     uint8_t          seg[JDPS_MAX_STEPS];
     float            time_s[JDPS_MAX_STEPS];
-    jdps_cplx_t        iq[JDPS_MAX_ANT][JDPS_MAX_STEPS];
+    complex        iq[JDPS_MAX_ANT][JDPS_MAX_STEPS];
     double           exp_v;
     double           exp_psi[JDPS_MAX_ANT][JDPS_MAX_SEG];
     double           exp_iq[JDPS_MAX_ANT][JDPS_MAX_STEPS][2];
@@ -73,7 +73,7 @@ static int read_case(FILE *fp, test_case_t *tc)
     if (!expect_tag(fp, "iq")) return -1;
     for (unsigned a = 0; a < A; a++)
         for (unsigned n = 0; n < N; n++)
-            if (fscanf(fp, "%f %f", &tc->iq[a][n].re, &tc->iq[a][n].im) != 2) return -1;
+            if (fscanf(fp, "%f %f", &tc->iq[a][n].r, &tc->iq[a][n].i) != 2) return -1;
     if (!expect_tag(fp, "exp_v") || fscanf(fp, "%lf", &tc->exp_v) != 1) return -1;
     if (!expect_tag(fp, "exp_psi")) return -1;
     for (unsigned a = 0; a < A; a++)
@@ -123,8 +123,8 @@ int main(int argc, char **argv)
                 psi_err = e > psi_err ? e : psi_err;
             }
             for (unsigned n = 0; n < tc.num_steps; n++) {
-                double dr = tc.iq[a][n].re - tc.exp_iq[a][n][0];
-                double di = tc.iq[a][n].im - tc.exp_iq[a][n][1];
+                double dr = tc.iq[a][n].r - tc.exp_iq[a][n][0];
+                double di = tc.iq[a][n].i - tc.exp_iq[a][n][1];
                 err2 += dr * dr + di * di;
                 ref2 += tc.exp_iq[a][n][0] * tc.exp_iq[a][n][0] + tc.exp_iq[a][n][1] * tc.exp_iq[a][n][1];
             }

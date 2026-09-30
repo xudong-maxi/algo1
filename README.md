@@ -24,6 +24,7 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
 ## C 模块（MCU 移植，协议无关）
 
 - `c/jdps.h` / `c/jdps.c`：JDPS 的 C 实现（C99、float32、无动态内存，工作区 13.9 KB 由调用方提供）。
+- 复数类型使用工程自带的 `complex`（成员 `r`、`i`），通过 `JDPS_COMPLEX_HEADER` 指定定义它的头文件；`c/test/complex_type.h` 仅供主机测试使用。
 - 不绑定具体协议：BLE CS、星闪等都可以用。频点规划由 `cfg.chan0_freq_hz` / `cfg.chan_spacing_hz` 配置（默认值为 BLE CS 的 2402 MHz + idx × 1 MHz）；「segment」指使用同一套 AGC 设置的一段连续 step，对应 BLE CS 的 subevent。
 - 入口：`jdps_process(&cfg, &meas, &work, &res)`，就地补偿 `meas.iq`，输出估计速度和各 segment 的相位。
 - 回归测试（与 Python 参考实现逐点对比，仿真用例 + 实测 log）：`cd c && make test`

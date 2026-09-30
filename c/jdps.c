@@ -23,42 +23,45 @@
 /* ------------------------------------------------------------------------- */
 /* Complex helpers                                                           */
 /* ------------------------------------------------------------------------- */
-static inline jdps_cplx_t cplx(float re, float im)
+/** Build a complex value; assigns by member name, independent of member order. */
+static inline complex cplx(float real, float imag)
 {
-    jdps_cplx_t z = { re, im };
+    complex z;
+    z.r = real;
+    z.i = imag;
     return z;
 }
 
-static inline jdps_cplx_t cplx_mul(jdps_cplx_t a, jdps_cplx_t b)
+static inline complex cplx_mul(complex a, complex b)
 {
-    return cplx(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+    return cplx(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
 }
 
 /** a * conj(b) */
-static inline jdps_cplx_t cplx_mul_conj(jdps_cplx_t a, jdps_cplx_t b)
+static inline complex cplx_mul_conj(complex a, complex b)
 {
-    return cplx(a.re * b.re + a.im * b.im, a.im * b.re - a.re * b.im);
+    return cplx(a.r * b.r + a.i * b.i, a.i * b.r - a.r * b.i);
 }
 
-static inline jdps_cplx_t cplx_conj(jdps_cplx_t a)
+static inline complex cplx_conj(complex a)
 {
-    return cplx(a.re, -a.im);
+    return cplx(a.r, -a.i);
 }
 
-static inline float cplx_abs(jdps_cplx_t a)
+static inline float cplx_abs(complex a)
 {
-    return sqrtf(a.re * a.re + a.im * a.im);
+    return sqrtf(a.r * a.r + a.i * a.i);
 }
 
 /** a / |a|; returns 1+0j for a == 0 */
-static inline jdps_cplx_t cplx_unit(jdps_cplx_t a)
+static inline complex cplx_unit(complex a)
 {
     float mag = cplx_abs(a);
-    return (mag > 0.0f) ? cplx(a.re / mag, a.im / mag) : cplx(1.0f, 0.0f);
+    return (mag > 0.0f) ? cplx(a.r / mag, a.i / mag) : cplx(1.0f, 0.0f);
 }
 
 /** exp(j*phase), phase wrapped to [-pi, pi] first for accuracy of sinf/cosf */
-static inline jdps_cplx_t cplx_expj(float phase)
+static inline complex cplx_expj(float phase)
 {
     phase -= JDPS_TWO_PI * rintf(phase / JDPS_TWO_PI);
     return cplx(cosf(phase), sinf(phase));
@@ -190,11 +193,11 @@ static void calc_pair_products(const jdps_meas_t *meas, jdps_work_t *work)
 static void calc_group_sums(const jdps_meas_t *meas, jdps_work_t *work, uint16_t num_groups)
 {
     for (uint8_t a = 0; a < meas->num_ant; a++) {
-        memset(work->group_sum[a], 0, num_groups * sizeof(jdps_cplx_t));
+        memset(work->group_sum[a], 0, num_groups * sizeof(complex));
         for (uint16_t p = 0; p < work->num_pairs; p++) {
-            jdps_cplx_t *acc = &work->group_sum[a][work->pair_group[p]];
-            acc->re += work->pair_prod[a][p].re;
-            acc->im += work->pair_prod[a][p].im;
+            complex *acc = &work->group_sum[a][work->pair_group[p]];
+            acc->r += work->pair_prod[a][p].r;
+            acc->i += work->pair_prod[a][p].i;
         }
     }
 }
@@ -224,12 +227,12 @@ static float search_velocity(const jdps_cfg_t *cfg, const jdps_meas_t *meas,
     for (uint16_t iv = 0; iv < num_points; iv++) {
         float metric = 0.0f;
         for (uint8_t a = 0; a < meas->num_ant; a++) {
-            jdps_cplx_t *acc = work->group_sum[a];
-            memset(acc, 0, num_groups * sizeof(jdps_cplx_t));
+            complex *acc = work->group_sum[a];
+            memset(acc, 0, num_groups * sizeof(complex));
             for (uint16_t p = 0; p < work->num_pairs; p++) {
-                jdps_cplx_t t = cplx_mul(work->pair_prod[a][p], work->pair_rot[p]);
-                acc[work->pair_group[p]].re += t.re;
-                acc[work->pair_group[p]].im += t.im;
+                complex t = cplx_mul(work->pair_prod[a][p], work->pair_rot[p]);
+                acc[work->pair_group[p]].r += t.r;
+                acc[work->pair_group[p]].i += t.i;
             }
             for (uint16_t g = 0; g < num_groups; g++) {
                 metric += cplx_abs(acc[g]);
@@ -271,7 +274,7 @@ static void compensate_doppler(const jdps_cfg_t *cfg, jdps_meas_t *meas, float v
     for (uint8_t n = 0; n < meas->num_steps; n++) {
         float phase = JDPS_K_ROUND_TRIP * chan_freq_hz(cfg, meas->chan_idx[n]) * v_mps *
                       (meas->step_time_s[n] - t_ref);
-        jdps_cplx_t rot = cplx_expj(phase);
+        complex rot = cplx_expj(phase);
         for (uint8_t a = 0; a < meas->num_ant; a++) {
             meas->iq[a][n] = cplx_mul(meas->iq[a][n], rot);
         }
@@ -299,13 +302,13 @@ static void compensate_doppler(const jdps_cfg_t *cfg, jdps_meas_t *meas, float v
  */
 static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
                                  uint8_t num_seg, uint8_t ant_first, uint8_t ant_num,
-                                 jdps_cplx_t *seg_phasor)
+                                 complex *seg_phasor)
 {
     const uint8_t K = num_seg;
-    jdps_cplx_t icpt_conj[JDPS_MAX_ANT][JDPS_MAX_ORDER];
-    jdps_cplx_t hmat[JDPS_MAX_SEG][JDPS_MAX_SEG];
-    jdps_cplx_t x[JDPS_MAX_SEG];
-    jdps_cplx_t x_next[JDPS_MAX_SEG];
+    complex icpt_conj[JDPS_MAX_ANT][JDPS_MAX_ORDER];
+    complex hmat[JDPS_MAX_SEG][JDPS_MAX_SEG];
+    complex x[JDPS_MAX_SEG];
+    complex x_next[JDPS_MAX_SEG];
 
 #define GROUP_SUM(a, o, k, j) (work->group_sum[(a)][((o) * K + (k)) * K + (j)])
 
@@ -315,10 +318,10 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
     /* initial intercept from intra-segment pairs only (independent of psi) */
     for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
         for (uint8_t o = 0; o < cfg->num_orders; o++) {
-            jdps_cplx_t diag = cplx(0.0f, 0.0f);
+            complex diag = cplx(0.0f, 0.0f);
             for (uint8_t k = 0; k < K; k++) {
-                diag.re += GROUP_SUM(a, o, k, k).re;
-                diag.im += GROUP_SUM(a, o, k, k).im;
+                diag.r += GROUP_SUM(a, o, k, k).r;
+                diag.i += GROUP_SUM(a, o, k, k).i;
             }
             icpt_conj[a][o] = cplx_conj(cplx_unit(diag));
         }
@@ -331,12 +334,12 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* Q[k][j] (stored in hmat) */
         for (uint8_t k = 0; k < K; k++) {
             for (uint8_t j = 0; j < K; j++) {
-                jdps_cplx_t q = cplx(0.0f, 0.0f);
+                complex q = cplx(0.0f, 0.0f);
                 for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
                     for (uint8_t o = 0; o < cfg->num_orders; o++) {
-                        jdps_cplx_t t = cplx_mul(GROUP_SUM(a, o, k, j), icpt_conj[a][o]);
-                        q.re += t.re;
-                        q.im += t.im;
+                        complex t = cplx_mul(GROUP_SUM(a, o, k, j), icpt_conj[a][o]);
+                        q.r += t.r;
+                        q.i += t.i;
                     }
                 }
                 hmat[k][j] = q;
@@ -345,9 +348,9 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* H = Q + Q^H, then diagonal := max_k sum_j |H[k][j]| */
         float diag_shift = 0.0f;
         for (uint8_t k = 0; k < K; k++) {
-            hmat[k][k] = cplx(2.0f * hmat[k][k].re, 0.0f);
+            hmat[k][k] = cplx(2.0f * hmat[k][k].r, 0.0f);
             for (uint8_t j = k + 1u; j < K; j++) {
-                jdps_cplx_t h = cplx(hmat[k][j].re + hmat[j][k].re, hmat[k][j].im - hmat[j][k].im);
+                complex h = cplx(hmat[k][j].r + hmat[j][k].r, hmat[k][j].i - hmat[j][k].i);
                 hmat[k][j] = h;
                 hmat[j][k] = cplx_conj(h);
             }
@@ -368,15 +371,15 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         }
         for (uint8_t it = 0; it < cfg->power_iter_num; it++) {
             for (uint8_t k = 0; k < K; k++) {
-                jdps_cplx_t s = cplx(0.0f, 0.0f);
+                complex s = cplx(0.0f, 0.0f);
                 for (uint8_t j = 0; j < K; j++) {
-                    jdps_cplx_t t = cplx_mul(hmat[k][j], x[j]);
-                    s.re += t.re;
-                    s.im += t.im;
+                    complex t = cplx_mul(hmat[k][j], x[j]);
+                    s.r += t.r;
+                    s.i += t.i;
                 }
                 x_next[k] = cplx_unit(s);
             }
-            memcpy(x, x_next, K * sizeof(jdps_cplx_t));
+            memcpy(x, x_next, K * sizeof(complex));
         }
         /* exp(j*psi_k) = conj(x_k), normalised so that psi_0 = 0 */
         for (uint8_t k = 0; k < K; k++) {
@@ -385,14 +388,14 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
         /* intercept update with all groups */
         for (uint8_t a = ant_first; a < ant_first + ant_num; a++) {
             for (uint8_t o = 0; o < cfg->num_orders; o++) {
-                jdps_cplx_t s = cplx(0.0f, 0.0f);
+                complex s = cplx(0.0f, 0.0f);
                 for (uint8_t k = 0; k < K; k++) {
                     for (uint8_t j = 0; j < K; j++) {
                         /* * exp(-j(psi_j - psi_k)) = * conj(u_j) * u_k */
-                        jdps_cplx_t rot = cplx_mul_conj(seg_phasor[k], seg_phasor[j]);
-                        jdps_cplx_t t   = cplx_mul(GROUP_SUM(a, o, k, j), rot);
-                        s.re += t.re;
-                        s.im += t.im;
+                        complex rot = cplx_mul_conj(seg_phasor[k], seg_phasor[j]);
+                        complex t   = cplx_mul(GROUP_SUM(a, o, k, j), rot);
+                        s.r += t.r;
+                        s.i += t.i;
                     }
                 }
                 icpt_conj[a][o] = cplx_conj(cplx_unit(s));
@@ -404,7 +407,7 @@ static void sync_segment_phases(const jdps_cfg_t *cfg, const jdps_work_t *work,
 
 /** iq[a][n] *= exp(-j*psi[a][se_n]) */
 static void remove_segment_phases(jdps_meas_t *meas,
-                                   jdps_cplx_t seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG])
+                                   complex seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG])
 {
     for (uint8_t a = 0; a < meas->num_ant; a++) {
         for (uint8_t n = 0; n < meas->num_steps; n++) {
@@ -443,7 +446,7 @@ static int check_params(const jdps_cfg_t *cfg, const jdps_meas_t *meas,
 jdps_status_t jdps_process(const jdps_cfg_t *cfg, jdps_meas_t *meas,
                                  jdps_work_t *work, jdps_result_t *res)
 {
-    jdps_cplx_t seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG];
+    complex seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG];
 
     if (!check_params(cfg, meas, work)) {
         return JDPS_ERR_PARAM;
@@ -472,7 +475,7 @@ jdps_status_t jdps_process(const jdps_cfg_t *cfg, jdps_meas_t *meas,
     } else {
         sync_segment_phases(cfg, work, meas->num_seg, 0u, meas->num_ant, seg_phasor[0]);
         for (uint8_t a = 1; a < meas->num_ant; a++) {
-            memcpy(seg_phasor[a], seg_phasor[0], meas->num_seg * sizeof(jdps_cplx_t));
+            memcpy(seg_phasor[a], seg_phasor[0], meas->num_seg * sizeof(complex));
         }
     }
     remove_segment_phases(meas, seg_phasor);
@@ -482,7 +485,7 @@ jdps_status_t jdps_process(const jdps_cfg_t *cfg, jdps_meas_t *meas,
         res->v_mps = v_hat;
         for (uint8_t a = 0; a < meas->num_ant; a++) {
             for (uint8_t k = 0; k < meas->num_seg; k++) {
-                res->psi_rad[a][k] = atan2f(seg_phasor[a][k].im, seg_phasor[a][k].re);
+                res->psi_rad[a][k] = atan2f(seg_phasor[a][k].i, seg_phasor[a][k].r);
             }
         }
     }
