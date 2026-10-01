@@ -275,7 +275,7 @@ C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channe
 | 4 | 37.2 ms | 19.0 ms |
 
 * 约 95 % 的耗时在第 1 遍的速度搜索：每条路径、每个速度点、每个信道对做一次 sin/cos 和两次复数乘。原 `ndtft` 每条路径的计算量与此相当（101 个速度点 × 约 78 个点对 × cosf + sinf）。
-* 如果需要进一步压缩，速度步长改为 0.5 m/s（默认配置下约 18.9 ms）（`MOTION_SPEED_RESOLUTION`，同时把 `SUBEVENT_MOTION_SPEED_POINT_NUM` 改为 45），耗时约减半，性能基本不变（§6.4）。
+* 如果需要进一步压缩，把速度步长改为 0.5 m/s（`MOTION_SPEED_RESOLUTION`，同时把 `SUBEVENT_MOTION_SPEED_POINT_NUM` 改为 45），默认配置下耗时约 18.9 ms，性能基本不变（§6.4）。
 * 以上是估算值，需要在目标芯片上实测确认。
 
 ### 7.4 `PAIR_ORDER` 的选择
