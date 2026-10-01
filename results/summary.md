@@ -56,29 +56,37 @@
 
 | config | P90 err [m] | P90 dev vs genie [m] | P90 phase RMS [rad] | P90 v err [m/s] | est. time 4 ant [ms] |
 |---|---|---|---|---|---|
-| step0.25_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 8.56 |
-| step0.5_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 5.03 |
-| step1.0_orders12 | 1.20 | 0.01 | 0.06 | 0.09 | 3.26 |
-| step0.5_orders1 | 1.19 | 0.02 | 0.07 | 0.09 | 2.64 |
+| step0.25_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 36.44 |
+| step0.5_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 18.87 |
+| step1.0_orders12 | 1.20 | 0.01 | 0.06 | 0.09 | 10.08 |
+| step0.5_orders1 | 1.19 | 0.02 | 0.07 | 0.09 | 9.66 |
+| step0.25_orders1 | 1.20 | 0.02 | 0.07 | 0.09 | 18.57 |
 
-## Estimated MCU load (default config, 4 antennas, 128 MHz)
+## Estimated MCU load of c/subevent_motion_alg.c (PAIR_ORDER 1, 4 antennas, 128 MHz)
 
 | K | pairs | v grid | groups | cycles | time [ms] |
 |---|---|---|---|---|---|
-| 1 | 138 | 89 | 2 | 978224 | 7.64 |
-| 2 | 138 | 89 | 8 | 1022096 | 7.99 |
-| 3 | 138 | 89 | 18 | 1095216 | 8.56 |
-| 5 | 138 | 89 | 50 | 1329200 | 10.38 |
+| 1 | 70 | 89 | 1 | 2317456 | 18.11 |
+| 2 | 70 | 89 | 4 | 2339680 | 18.28 |
+| 3 | 70 | 89 | 9 | 2376720 | 18.57 |
+| 4 | 70 | 89 | 16 | 2428576 | 18.97 |
+
+PAIR_ORDER 2:
+
+| K | pairs | v grid | groups | cycles | time [ms] |
+|---|---|---|---|---|---|
+| 1 | 138 | 89 | 2 | 4547456 | 35.53 |
+| 2 | 138 | 89 | 8 | 4591328 | 35.87 |
+| 3 | 138 | 89 | 18 | 4664448 | 36.44 |
+| 4 | 138 | 89 | 32 | 4766816 | 37.24 |
 
 Breakdown for K=3:
 
 | stage | cycles |
 |---|---|
-| pass1: pair products | 4416 |
-| pass1: rotator init (2 sincos / pair) | 71760 |
-| pass1: rotator recursion | 393024 |
-| pass1: group accumulation | 393024 |
-| pass1: |Z| per group | 128160 |
-| pass2: Doppler rot (2 sincos / pair) + pair products | 79488 |
-| phase sync (K x K power iteration) | 3456 |
+| pass1: speed spectrum (sincos + 2 cmul / pair / point) | 2242800 |
+| pass1: |Z| per group | 64080 |
+| pass1: noise statistics | 5040 |
+| pass2: Doppler rot (2 sincos / pair) + pair products | 40320 |
+| phase sync (K x K power iteration) | 2592 |
 | pass3: Doppler + AGC de-rotation | 21888 |

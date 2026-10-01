@@ -1876,7 +1876,7 @@
     "loss10": 0.006592939619886165,
     "v90": 0.07602486521711972
    },
-   "cplx": 8.556375
+   "cplx": 36.441
   },
   "step0.5_orders12": {
    "stats": {
@@ -1890,7 +1890,7 @@
     "loss10": 0.006652205247013763,
     "v90": 0.07864823622764457
    },
-   "cplx": 5.025375
+   "cplx": 18.8685
   },
   "step1.0_orders12": {
    "stats": {
@@ -1904,7 +1904,7 @@
     "loss10": 0.006551359710389528,
     "v90": 0.08522327754701621
    },
-   "cplx": 3.259875
+   "cplx": 10.082249999999998
   },
   "step0.5_orders1": {
    "stats": {
@@ -1918,77 +1918,145 @@
     "loss10": 0.009729433041879386,
     "v90": 0.08826666162121495
    },
-   "cplx": 2.63625
+   "cplx": 9.658125
+  },
+  "step0.25_orders1": {
+   "stats": {
+    "p50": 0.49643807998933065,
+    "p90": 1.1951296577630879,
+    "p95": 1.5077504973560905,
+    "out1m": 15.75,
+    "dev90": 0.01660410066331153,
+    "dev_out": 0.0,
+    "ph90": 0.06651005496640282,
+    "loss10": 0.009822687454508169,
+    "v90": 0.08947417709586541
+   },
+   "cplx": 18.568125000000002
   }
  },
  "complexity": {
+  "K=1": {
+   "pairs": 70.0,
+   "grid": 89,
+   "groups": 1,
+   "ops": {
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 2242800.0,
+    "pass1: |Z| per group": 7120,
+    "pass1: noise statistics": 5040.0,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 40320.0,
+    "phase sync (K x K power iteration)": 288,
+    "pass3: Doppler + AGC de-rotation": 21888
+   },
+   "cycles": 2317456.0,
+   "ms": 18.105125
+  },
+  "K=2": {
+   "pairs": 70.0,
+   "grid": 89,
+   "groups": 4,
+   "ops": {
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 2242800.0,
+    "pass1: |Z| per group": 28480,
+    "pass1: noise statistics": 5040.0,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 40320.0,
+    "phase sync (K x K power iteration)": 1152,
+    "pass3: Doppler + AGC de-rotation": 21888
+   },
+   "cycles": 2339680.0,
+   "ms": 18.27875
+  },
+  "K=3": {
+   "pairs": 70.0,
+   "grid": 89,
+   "groups": 9,
+   "ops": {
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 2242800.0,
+    "pass1: |Z| per group": 64080,
+    "pass1: noise statistics": 5040.0,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 40320.0,
+    "phase sync (K x K power iteration)": 2592,
+    "pass3: Doppler + AGC de-rotation": 21888
+   },
+   "cycles": 2376720.0,
+   "ms": 18.568125000000002
+  },
+  "K=4": {
+   "pairs": 70.0,
+   "grid": 89,
+   "groups": 16,
+   "ops": {
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 2242800.0,
+    "pass1: |Z| per group": 113920,
+    "pass1: noise statistics": 5040.0,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 40320.0,
+    "phase sync (K x K power iteration)": 4608,
+    "pass3: Doppler + AGC de-rotation": 21888
+   },
+   "cycles": 2428576.0,
+   "ms": 18.97325
+  }
+ },
+ "complexity_order2": {
   "K=1": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 2,
    "ops": {
-    "pass1: pair products": 4416.0,
-    "pass1: rotator init (2 sincos / pair)": 71760.0,
-    "pass1: rotator recursion": 393024.0,
-    "pass1: group accumulation": 393024.0,
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 4421520.0,
     "pass1: |Z| per group": 14240,
+    "pass1: noise statistics": 9936.0,
     "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 384,
     "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 978224.0,
-   "ms": 7.6423749999999995
+   "cycles": 4547456.0,
+   "ms": 35.527
   },
   "K=2": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 8,
    "ops": {
-    "pass1: pair products": 4416.0,
-    "pass1: rotator init (2 sincos / pair)": 71760.0,
-    "pass1: rotator recursion": 393024.0,
-    "pass1: group accumulation": 393024.0,
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 4421520.0,
     "pass1: |Z| per group": 56960,
+    "pass1: noise statistics": 9936.0,
     "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 1536,
     "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 1022096.0,
-   "ms": 7.985124999999999
+   "cycles": 4591328.0,
+   "ms": 35.869749999999996
   },
   "K=3": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 18,
    "ops": {
-    "pass1: pair products": 4416.0,
-    "pass1: rotator init (2 sincos / pair)": 71760.0,
-    "pass1: rotator recursion": 393024.0,
-    "pass1: group accumulation": 393024.0,
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 4421520.0,
     "pass1: |Z| per group": 128160,
+    "pass1: noise statistics": 9936.0,
     "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 3456,
     "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 1095216.0,
-   "ms": 8.556375
+   "cycles": 4664448.0,
+   "ms": 36.441
   },
-  "K=5": {
+  "K=4": {
    "pairs": 138.0,
    "grid": 89,
-   "groups": 50,
+   "groups": 32,
    "ops": {
-    "pass1: pair products": 4416.0,
-    "pass1: rotator init (2 sincos / pair)": 71760.0,
-    "pass1: rotator recursion": 393024.0,
-    "pass1: group accumulation": 393024.0,
-    "pass1: |Z| per group": 356000,
+    "pass1: speed spectrum (sincos + 2 cmul / pair / point)": 4421520.0,
+    "pass1: |Z| per group": 227840,
+    "pass1: noise statistics": 9936.0,
     "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
-    "phase sync (K x K power iteration)": 9600,
+    "phase sync (K x K power iteration)": 6144,
     "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 1329200.0,
-   "ms": 10.384375
+   "cycles": 4766816.0,
+   "ms": 37.240750000000006
   }
  }
 }

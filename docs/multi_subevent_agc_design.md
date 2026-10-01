@@ -128,7 +128,7 @@ score = (max_v M(v) − μ) / σ
 ```
 * 纯噪声时，K=1~5 下 score 最大约 4.5；有信号时，SNR 5 dB 下 K=1~5 的 1% 分位都 ≥ 5.9。样例实测 log 的 score 为 9.5。
 * 判定规则：
-  * 全为 0（σ=0）：返回 `no_signal`（C 版本为 `JDPS_ERR_NO_SIGNAL`），IQ 原样返回。
+  * 全为 0（σ=0）：返回 `no_signal`（C 版本 `subevent_motion_solve_speed` 返回 `ERRCODE_RANGING_ALG_NOT_ENOUGH_IQ`），IQ 原样返回。
   * score < 5 或峰值落在网格最外侧点：速度判为不可信，**按 v=0 补偿**，AGC 相位对齐照常进行。
   * 否则使用估计出的 v̂。
 * 搜索范围在 ±v_max 外各加 1 m/s 保护带，所以真实 |v| 接近 10 m/s 时不会被误判为落在边界。
@@ -215,10 +215,17 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 | 各天线 AGC 相位不同 | 1.16 / 0 / 0 | 1.23 / 0.46 / 0.61 | 共享模式 1.18 / 0.27；**逐天线模式 1.16 / 0.00** |
 | 各路径径向速度不同 | 0.51 / 0 / 0 | 1.24 / 1.20 / 3.03 | 1.15 / 1.06 / 4.27（见 §8） |
 
-### 6.4 复杂度参数（K=3，SNR 10 dB）
+### 6.4 复杂度参数（K=3，SNR 10 dB；耗时为 C 模块 `subevent_motion_alg` 在 128 MHz 下的估算）
 
-| 配置 | P90 误差 | 与 genie 偏差 P90 | v 误差 P90 | 估计耗时（4 路天线） |
+| 配置 | P90 误差 | 与 genie 偏差 P90 | v 误差 P90 | 估计耗时（4 条路径） |
 |---|---|---|---|---|
+| 步长 0.25，间隔 {1}（C 模块默认，`PAIR_ORDER=1`） | 1.20 | 0.02 | 0.09 | 18.6 ms |
+| 步长 0.5，间隔 {1} | 1.19 | 0.02 | 0.09 | 9.7 ms |
+| 步长 0.25，间隔 {1,2}（`PAIR_ORDER=2`） | 1.19 | 0.01 | 0.08 | 36.4 ms |
+| 步长 0.5，间隔 {1,2} | 1.19 | 0.01 | 0.08 | 18.9 ms |
+| 步长 1.0，间隔 {1,2} | 1.20 | 0.01 | 0.09 | 10.1 ms |
+
+---|---|---|---|---|
 | 步长 0.25，orders {1,2}（默认） | 1.19 | 0.01 | 0.08 | 8.56 ms |
 | 步长 0.5，orders {1,2} | 1.19 | 0.01 | 0.08 | 5.03 ms |
 | 步长 1.0，orders {1,2} | 1.20 | 0.01 | 0.09 | 3.26 ms |
@@ -226,48 +233,53 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 
 ---
 
-## 7. MCU 实现：流式处理与复杂度（128 MHz，4 路天线）
+## 7. MCU 实现：`c/subevent_motion_alg.c`（128 MHz，4 条天线路径）
 
-### 7.1 流式结构（任何时刻内存里只放一路 IQ）
-算法里跨天线的量只有两类，都可以逐路累加：
-* **速度谱**及其噪声统计量 μ、σ²：各路天线贡献之和，累加在一条 89 点的曲线上；
-* **组和** `Z[a][o][k][j]`：每路一个很小的复数数组（K=3 时 18 个），相位同步只用它，不需要 IQ。
+### 7.1 与工程对齐的接口
+C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channel_select_t`（跳频表、每个 subevent 的信道数、每个信道的测量时长、subevent 间隔），IQ 按信道号排列（`complex iq[ALG_CHANNEL_NUM]`，未测量的信道不参与计算），返回 `errcode_t`。时间约定与 `motion_effect_analyze` 完全相同（`ch_hop_orders[0]` 为 mode0，不参与计算）。
 
-因此 C 实现（`c/jdps.h`）是流式接口，每路天线的 IQ 按顺序提供 3 遍：
+任何时刻内存里只需放一路 IQ，每路 IQ 按顺序提供 3 遍：
 
 | 步骤 | 调用 | 做什么 |
 |---|---|---|
-| 初始化 | `jdps_begin` | 建立与天线无关的相邻信道配对表 |
-| 第 1 遍 | 每路 `jdps_add_velocity` → `jdps_solve_velocity` | 累加速度谱 → 估计速度并判断是否可信 |
-| 第 2 遍 | 每路 `jdps_add_phase` → `jdps_solve_phase` | 用已知速度在线补偿后累加组和（不复制 IQ）→ 估计各 segment 相位 |
-| 第 3 遍 | 每路 `jdps_apply` | 就地补偿这一路的 IQ，之后即可做这一路的 IFFT |
+| 初始化 | `subevent_motion_init` | 由 `channel_select_t` 建立每个信道的测量时刻和所属 subevent |
+| 第 1 遍 | 每路 `subevent_motion_add_speed_path` → `subevent_motion_solve_speed` | 累加速度谱 → 估计速度并判断是否可信 |
+| 第 2 遍 | 每路 `subevent_motion_add_phase_path` → `subevent_motion_solve_phase` | 在线补偿多普勒后累加分组和 → 估计各 subevent 相位（所有路径共用） |
+| 第 3 遍 | 每路 `subevent_motion_iq_compensation` | 就地补偿这一路的 IQ，之后做这一路的 IFFT |
 
-逐天线估计 AGC 相位（`per_ant_phase = 1`）时，`jdps_apply(a)` 可以紧跟在 `jdps_add_phase(a)` 之后，第 2、3 遍合并，每路 IQ 只需提供 2 遍。
+为了降低内存，实现上做了三点取舍：
+* IQ 按信道号排列，信道对 (f, f+o) 直接由下标得到，**不需要配对表**；
+* 速度搜索中每个速度点都直接计算 sin/cos（与原 `ndtft` 相同），**不保存旋转因子**；信道对的共轭乘积和相位率也在用到时现算；
+* 第 1 遍的速度谱和第 2 遍的分组和放在同一个 union 里共用。
 
-内存（`jdps_ctx_t`，不含 IQ；第 1 遍与第 2 遍的工作区不会同时使用，放在同一个 union 里共用）：
+### 7.2 内存
+| 实现 | 常驻 / 堆 | 栈峰值 | 合计 |
+|---|---|---|---|
+| 原 `motion_correct_alg`（单路、不处理 AGC） | `MotionEffectInput` 堆 636 B + `MotionEffectResult` 92 B | 约 400 B | **约 1.1 KB** |
+| `subevent_motion_alg`，`PAIR_ORDER=1`（默认）、最多 4 个 subevent | `SubeventMotionCtx` 1,124 B | 368 B | **约 1.5 KB** |
+| 同上，最多 3 个 subevent（`-DSUBEVENT_MOTION_MAX_SUBEVENT_NUM=3`） | 900 B | ≤ 368 B | **约 1.3 KB** |
+| `PAIR_ORDER=2`、最多 4 个 subevent | 1,764 B | 448 B | 约 2.2 KB |
 
-| 编译配置 | ctx 大小 | 说明 |
+（`ALG_CHANNEL_NUM` = 80、最多 4 条路径；栈为 x86 上 `-fstack-usage` 实测值，ARM 上通常更小；不含调用方的单路 IQ 缓冲 80 × 8 = 640 B。）
+
+### 7.3 复杂度
+周期假设（Cortex‑M4F/M33 float32，含 load/store，偏保守）：sincos 60 cycles、复数乘 8 cycles、复数取模 20 cycles。
+
+| K | `PAIR_ORDER=1`（约 70 对） | `PAIR_ORDER=2`（约 138 对） |
 |---|---|---|
-| 默认（4 路、72 step、8 segment、2 阶配对、89 个速度点） | 6.1 KB | |
-| `-DJDPS_MAX_SEG=3u` | 5.1 KB | subevent 最多 3 个；结果与默认完全相同 |
-| `-DJDPS_MAX_SEG=3u -DJDPS_MAX_ORDER=1u`，并设 `cfg.num_orders = 1` | 2.8 KB | 只用间隔 1 的相邻对，性能略降（§6.4：SNR 10 dB 时与 genie 偏差 P90 从 0.01 m 变为 0.02 m） |
+| 1 | 18.1 ms | 35.5 ms |
+| 2 | 18.3 ms | 35.9 ms |
+| 3 | **18.6 ms** | 36.4 ms |
+| 4 | 19.0 ms | 37.2 ms |
 
-另外：调用方的单路 IQ 缓冲为 72 × 8 = 576 B；栈峰值在相位同步函数中，`JDPS_MAX_SEG=8` 时约 0.9 KB，`JDPS_MAX_SEG=3` 时约 0.4 KB（x86 上用 -fstack-usage 实测，ARM 上通常更小）。这些上限都可以在编译参数里覆盖。
-
-### 7.2 复杂度
-周期假设（Cortex‑M4F/M33 float32，含 load/store，偏保守）：复数乘或乘加 8 cycles、复数取模 20 cycles、sincos 60 cycles。
-
-| K | 相邻对数 | v 网格点数 | 组数 | 周期数 | 时间 |
-|---|---|---|---|---|---|
-| 1 | 138 | 89 | 2 | 0.98 M | 7.6 ms |
-| 2 | 138 | 89 | 8 | 1.02 M | 8.0 ms |
-| 3 | 138 | 89 | 18 | 1.10 M | **8.6 ms** |
-| 5 | 138 | 89 | 50 | 1.33 M | 10.4 ms |
-
-* 约 72 % 的耗时在第 1 遍：每路天线都要把每一对的旋转因子在速度网格上递推一遍（P×G×A 次复数乘），再做组累加（P×G×A 次复数乘加）。流式处理比「所有天线一起处理」多了约 3.4 ms，因为旋转因子不能再在天线之间共用。
-* 即使周期估计偏差 3 倍，也在 60 ms 预算的一半以内。
-* 需要进一步压缩时，速度网格步长改为 0.5 m/s，耗时约减半，性能不变（见 §6.4）。
+* 约 95 % 的耗时在第 1 遍的速度搜索：每条路径、每个速度点、每个信道对做一次 sin/cos 和两次复数乘。原 `ndtft` 每条路径的计算量与此相当（101 个速度点 × 约 78 个点对 × cosf + sinf）。
+* 如果需要进一步压缩，速度步长改为 0.5 m/s（`MOTION_SPEED_RESOLUTION`，同时把 `SUBEVENT_MOTION_SPEED_POINT_NUM` 改为 45），耗时约减半，性能基本不变（§6.4）。
 * 以上是估算值，需要在目标芯片上实测确认。
+
+### 7.4 `PAIR_ORDER` 的选择
+* `PAIR_ORDER=1`（默认）：只用相邻信道，与原实现一致，内存和耗时最小。代价是可信度分数偏低：样例实测 log 的分数为 5.8（门限 5），仿真中 K=3、SNR 0 dB 时大部分正确的速度估计会因分数不足回退到 v=0。
+* `PAIR_ORDER=2`：再加间隔 2 的信道对，分数约提高 1.5 倍（样例 log 为 9.5），估计更稳；内存约 +0.6 KB，耗时约 ×2。
+* 速度超出 ±10 m/s 的支持范围时（例如 15 m/s），`PAIR_ORDER=2` 在仿真中出现过一次以略高于门限的分数接受了错误速度，`PAIR_ORDER=1` 则正确拒绝。
 
 ---
 

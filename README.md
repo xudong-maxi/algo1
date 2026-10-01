@@ -26,18 +26,18 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
   - `trend.png`：多于 1 个 procedure 时生成，画出距离和速度随 procedure 的变化。
 - 远端 IQ 按 log 中 `local iq ts / remote iq ts` 的对应关系配对；某路天线缺本地或远端 IQ 时打印 warn，全部缺失（全 0）时跳过该次测量。
 
-## C 模块（MCU 移植，协议无关）
+## C 模块（MCU，按工程 motion_correct_alg 风格）
 
-- `c/jdps.h` / `c/jdps.c`：JDPS 的 C 实现（C99、float32、无动态内存）。**流式接口：任何时刻内存里只需放一路天线的 IQ**，跨天线的中间结果保存在 `jdps_ctx_t`（默认 6.1 KB；`-DJDPS_MAX_SEG=3u` 时 5.1 KB；再加 `-DJDPS_MAX_ORDER=1u` 时 2.8 KB）。
-- 复数类型使用工程自带的 `complex`（成员 `r`、`i`），通过 `JDPS_COMPLEX_HEADER` 指定定义它的头文件；`c/test/complex_type.h` 仅供主机测试使用。
-- 不绑定具体协议：BLE CS、星闪等都可以用。频点规划由 `cfg.chan0_freq_hz` / `cfg.chan_spacing_hz` 配置（默认值为 BLE CS 的 2402 MHz + idx × 1 MHz）；「segment」指使用同一套 AGC 设置的一段连续 step，对应 BLE CS 的 subevent。
-- 调用顺序（每路 IQ 按顺序提供 3 遍；`per_ant_phase = 1` 时第 2、3 遍可合并为 2 遍）：
+- `c/subevent_motion_alg.h` / `c/subevent_motion_alg.c`：多 subevent 运动补偿 + AGC 相位对齐。输入为工程的 `channel_select_t` 和按信道号排列的 IQ（`complex iq[ALG_CHANNEL_NUM]`），返回 `errcode_t`；所有天线路径共用 subevent 相位（AGC 按设备设定）。
+- 内存：`SubeventMotionCtx` 1,124 B（默认：最多 4 条路径、4 个 subevent、只用相邻信道）+ 栈 ≤ 368 B；任何时刻只需一路 IQ 在内存中。
+- 编译宏：`SUBEVENT_MOTION_MAX_PATH_NUM`、`SUBEVENT_MOTION_MAX_SUBEVENT_NUM`、`SUBEVENT_MOTION_PAIR_ORDER`（1 或 2，2 更稳，内存约 +0.6 KB、耗时约 ×2）。
+- 调用顺序（每路 IQ 按顺序提供 3 遍）：
   ```c
-  jdps_begin(&ctx, &cfg, &layout);
-  for (a = 0; a < A; a++) jdps_add_velocity(&ctx, iq_a);   /* 第 1 遍 */
-  if (jdps_solve_velocity(&ctx) != JDPS_OK) { /* 无有效信号，跳过 */ }
-  for (a = 0; a < A; a++) jdps_add_phase(&ctx, a, iq_a);   /* 第 2 遍 */
-  jdps_solve_phase(&ctx, &res);
-  for (a = 0; a < A; a++) jdps_apply(&ctx, a, iq_a);       /* 第 3 遍：就地补偿后做该路 IFFT */
+  subevent_motion_init(&ctx, channel_select_cfg, path_num);
+  for (p = 0; p < path_num; p++) subevent_motion_add_speed_path(&ctx, iq_p);      /* 第 1 遍 */
+  if (subevent_motion_solve_speed(&ctx) != ERRCODE_RANGING_ALG_SUCCESS) { /* 无有效信号，跳过 */ }
+  for (p = 0; p < path_num; p++) subevent_motion_add_phase_path(&ctx, p, iq_p);   /* 第 2 遍 */
+  subevent_motion_solve_phase(&ctx, &res);
+  for (p = 0; p < path_num; p++) subevent_motion_iq_compensation(&ctx, iq_p);     /* 第 3 遍，之后做 IFFT */
   ```
-- 回归测试（与 Python 参考实现逐点对比，仿真用例 + 实测 log）：`cd c && make test`
+- 回归测试（与 Python 参考实现逐点对比，PAIR_ORDER = 1 / 2 两种编译各跑一遍）：`cd c && make test`。`c/test/port/` 下是工程头文件（`common_util.h`、`securec.h`）的主机测试桩，集成时使用工程自己的头文件。

@@ -194,20 +194,20 @@ def fig_sweep(xs, table, xlabel, out, fname, methods, title):
 CYC = dict(cmul=8, cmac=8, cabs=20, sincos=60, misc_per_pair=10)   # Cortex-M4F/M33 float32, conservative
 
 
-def complexity(n_se, n_ant=4, jcfg=JdpsCfg(), n_ch=72, f_cpu=128e6, trials=50):
+def complexity(n_se, n_ant=4, jcfg=JdpsCfg(orders=(1,)), n_ch=72, f_cpu=128e6, trials=50):
     """Average op counts / cycle estimate for the proposed algorithm."""
     rng = np.random.default_rng(0)
     P = np.mean([len(adjacent_pairs(rng.permutation(np.r_[2:23, 26:77]), jcfg.orders)[0])
                  for _ in range(trials)])
     G = len(jcfg.v_grid)
     Ng = len(jcfg.orders) * n_se * n_se
-    # streaming C implementation: one antenna in memory, every antenna passed 3 times
+    # C module c/subevent_motion_alg.c: one path in memory, rotators by sin/cos per search point
+    # (no rotator tables), pair products recomputed from the iq on the fly
+    per_pair_point = CYC["sincos"] + CYC["misc_per_pair"] + 2 * CYC["cmul"] + 4
     ops = {
-        "pass1: pair products": P * n_ant * CYC["cmul"],
-        "pass1: rotator init (2 sincos / pair)": P * n_ant * (2 * CYC["sincos"] + CYC["misc_per_pair"]),
-        "pass1: rotator recursion": P * G * n_ant * CYC["cmul"],
-        "pass1: group accumulation": P * G * n_ant * CYC["cmac"],
+        "pass1: speed spectrum (sincos + 2 cmul / pair / point)": P * G * n_ant * per_pair_point,
         "pass1: |Z| per group": G * n_ant * Ng * CYC["cabs"],
+        "pass1: noise statistics": P * n_ant * (CYC["cmul"] + CYC["misc_per_pair"]),
         "pass2: Doppler rot (2 sincos / pair) + pair products": P * n_ant * (2 * CYC["sincos"] + 3 * CYC["cmul"]),
         "phase sync (K x K power iteration)": jcfg.n_refine_iter * (jcfg.n_power_iter * n_se * n_se
                                                                    + Ng * n_ant) * CYC["cmac"],
@@ -283,12 +283,14 @@ def main():
         # 6) complexity knobs: v grid step and pair orders
         summary["knobs"] = {}
         for name, jc in {"step0.25_orders12": JdpsCfg(), "step0.5_orders12": JdpsCfg(v_step=0.5),
-                         "step1.0_orders12": JdpsCfg(v_step=1.0), "step0.5_orders1": JdpsCfg(v_step=0.5, orders=(1,))}.items():
+                         "step1.0_orders12": JdpsCfg(v_step=1.0), "step0.5_orders1": JdpsCfg(v_step=0.5, orders=(1,)),
+                         "step0.25_orders1": JdpsCfg(orders=(1,))}.items():
             r = monte_carlo(dataclasses.replace(base, snr_db=10), N, jcfg=jc, methods=["genie", "jdps"],
                             pool=pool, seed0=6000)
             summary["knobs"][name] = dict(stats=stats(r["jdps"]), cplx=complexity(3, jcfg=jc)["ms"])
 
-    summary["complexity"] = {f"K={K}": complexity(K) for K in [1, 2, 3, 5]}
+    summary["complexity"] = {f"K={K}": complexity(K) for K in [1, 2, 3, 4]}
+    summary["complexity_order2"] = {f"K={K}": complexity(K, jcfg=JdpsCfg()) for K in [1, 2, 3, 4]}
     with open(os.path.join(a.out, "summary.json"), "w") as fp:
         json.dump(summary, fp, indent=1, default=float)
     write_markdown(summary, os.path.join(a.out, "summary.md"))
@@ -327,10 +329,15 @@ def write_markdown(s, path):
     for name, t in s["knobs"].items():
         st = t["stats"]
         L.append(f"| {name} | {fmt(st['p90'])} | {fmt(st['dev90'])} | {fmt(st['ph90'])} | {fmt(st['v90'])} | {t['cplx']:.2f} |")
-    L.append("\n## Estimated MCU load (default config, 4 antennas, 128 MHz)\n")
+    L.append("\n## Estimated MCU load of c/subevent_motion_alg.c (PAIR_ORDER 1, 4 antennas, 128 MHz)\n")
     L.append("| K | pairs | v grid | groups | cycles | time [ms] |")
     L.append("|---|---|---|---|---|---|")
     for k, c in s["complexity"].items():
+        L.append(f"| {k[2:]} | {c['pairs']:.0f} | {c['grid']} | {c['groups']} | {c['cycles']:.0f} | {c['ms']:.2f} |")
+    L.append("\nPAIR_ORDER 2:\n")
+    L.append("| K | pairs | v grid | groups | cycles | time [ms] |")
+    L.append("|---|---|---|---|---|---|")
+    for k, c in s["complexity_order2"].items():
         L.append(f"| {k[2:]} | {c['pairs']:.0f} | {c['grid']} | {c['groups']} | {c['cycles']:.0f} | {c['ms']:.2f} |")
     c = s["complexity"]["K=3"]
     L.append("\nBreakdown for K=3:\n")
