@@ -104,9 +104,12 @@ def build_measurement(proc, split, n_mode0, tcfg, combine="mul"):
     no_iq = [a for a in ants if not proc["iq"].get((a, 0)) or not proc["iq"].get((a, 1))]
     se = np.repeat(np.arange(len(split)), split)
     idx = np.concatenate([np.arange(c) for c in split])
-    se_dur = np.array(split) * tcfg["t_step"] - tcfg["t_gap"]
+    # every subevent starts with one mode-0 step (tcfg["mode0"] long), then the mode-2 steps;
+    # se_gap = end of the previous subevent to start of the next (same as channel_select_t.t_mes)
+    mode0 = tcfg.get("mode0", 0.0)
+    se_dur = mode0 + np.array(split) * tcfg["t_step"] - tcfg["t_gap"]
     se_start = np.concatenate([[0.0], np.cumsum(se_dur + tcfg["se_gap"])[:-1]])
-    t = se_start[se] + idx * tcfg["t_step"] + tcfg["t_meas"] / 2
+    t = se_start[se] + mode0 + idx * tcfg["t_step"] + tcfg["t_meas"] / 2
     return SimpleNamespace(y=y, ch=hop, f=F0 + hop * DF, t=t, se=se, t_ref=t.mean(),
                            ants=ants, missing=missing, no_iq=no_iq)
 
@@ -181,6 +184,7 @@ def main():
     ap.add_argument("--split", default="25,25,22", help="mode-2 steps per subevent")
     ap.add_argument("--n-mode0", type=int, default=1, help="leading mode-0 entries in ch_idx_list")
     ap.add_argument("--se-gap-ms", type=float, default=40.0)
+    ap.add_argument("--mode0-us", type=float, default=483.0, help="mode-0 step at the start of every subevent")
     ap.add_argument("--t-meas-us", type=float, default=565.0)
     ap.add_argument("--t-gap-us", type=float, default=150.0)
     ap.add_argument("--combine", choices=["mul", "conj"], default="mul",
@@ -190,7 +194,7 @@ def main():
     a = ap.parse_args()
 
     split = [int(x) for x in a.split.split(",")]
-    tcfg = dict(t_meas=a.t_meas_us * 1e-6, t_gap=a.t_gap_us * 1e-6,
+    tcfg = dict(t_meas=a.t_meas_us * 1e-6, t_gap=a.t_gap_us * 1e-6, mode0=a.mode0_us * 1e-6,
                 t_step=(a.t_meas_us + a.t_gap_us) * 1e-6, se_gap=a.se_gap_ms * 1e-3)
     jcfg = JdpsCfg(v_max=a.v_max, per_ant_theta=a.per_ant)
     os.makedirs(a.out, exist_ok=True)

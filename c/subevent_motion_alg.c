@@ -111,39 +111,57 @@ static inline uint8_t group_count(SubeventMotionCtx* ctx)
     return (uint8_t)(SUBEVENT_MOTION_PAIR_ORDER * ctx->subevent_num * ctx->subevent_num);
 }
 
+// 检查 channel_select_t 的步数约定：每个 subevent 的第一步是 mode0，
+// ch_hop_orders 只在第 0 项放一个 mode0，其后依次是所有 mode-2 步的信道，
+// 因此 ch_num = 1 + sum(ch_num_per_subevent[s] - 1)
+static bool channel_select_valid(channel_select_t* channel_select_cfg)
+{
+    uint16_t mode2_num = 0;
+    for (uint8_t s = 0; s < channel_select_cfg->subevent_num; ++s) {
+        if (channel_select_cfg->ch_num_per_subevent[s] == 0) {
+            return false;
+        }
+        mode2_num += (uint16_t)(channel_select_cfg->ch_num_per_subevent[s] - 1);
+    }
+    return channel_select_cfg->ch_num == mode2_num + 1;
+}
+
 static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* channel_select_cfg)
 {
-    uint8_t length = channel_select_cfg->ch_num;
     uint32_t current_time_us = 0;
-    uint8_t current_step = 0;
+    uint16_t step = 0;          // time_per_channel 的下标，包含每个 subevent 开头的 mode0
+    uint16_t mode2_step = 0;    // mode-2 步的序号，对应 ch_hop_orders[mode2_step + 1]
     uint16_t channel_count = 0;
     float sum_time = 0.0f;
     float sum_channel = 0.0f;
     uint8_t subevent_count[SUBEVENT_MOTION_MAX_SUBEVENT_NUM] = {0};
 
+    if (!channel_select_valid(channel_select_cfg)) {
+        return ERRCODE_RANGING_ALG_INVALID_PARAM;
+    }
     memset_s(ctx->channel.subevent, sizeof(ctx->channel.subevent), SUBEVENT_NOT_MEASURED,
              sizeof(ctx->channel.subevent));
 
-    // 与 motion_effect_analyze 相同的时间约定：subevent 内逐步累加每个信道的测量时长，
-    // subevent 之间加上间隔 t_mes；ch_hop_orders[0] 是 mode0，第 step 步的信道是 ch_hop_orders[step + 1]
+    // subevent 内逐步累加每一步的测量时长（第一步为 mode0，只计时间），subevent 之间加上间隔 t_mes；
+    // 每个 mode-2 信道的测量时刻取该步的开始时刻
     for (uint8_t s = 0; s < ctx->subevent_num; ++s) {
         for (uint8_t i = 0; i < channel_select_cfg->ch_num_per_subevent[s]; ++i) {
-            if (current_step + 1 >= length) {
-                break;
+            if (i > 0) {
+                uint8_t ch = channel_select_cfg->ch_hop_orders[mode2_step + 1];
+                mode2_step++;
+                // 只记录第一次被选到的信道
+                if ((ch < ALG_CHANNEL_NUM) && !channel_measured(ctx, ch)) {
+                    float t_sec = (float)current_time_us * 1e-6f;
+                    ctx->channel.subevent[ch] = s;
+                    ctx->channel.tau[ch] = t_sec;
+                    sum_time += t_sec;
+                    sum_channel += (float)ch;
+                    subevent_count[s]++;
+                    channel_count++;
+                }
             }
-            uint8_t ch = channel_select_cfg->ch_hop_orders[current_step + 1];
-            // 只记录第一次被选到的信道
-            if ((ch < ALG_CHANNEL_NUM) && !channel_measured(ctx, ch)) {
-                float t_sec = (float)current_time_us * 1e-6f;
-                ctx->channel.subevent[ch] = s;
-                ctx->channel.tau[ch] = t_sec;
-                sum_time += t_sec;
-                sum_channel += (float)ch;
-                subevent_count[s]++;
-                channel_count++;
-            }
-            current_time_us += channel_select_cfg->time_per_channel[current_step];
-            current_step++;
+            current_time_us += channel_select_cfg->time_per_channel[step];
+            step++;
         }
         current_time_us += channel_select_cfg->t_mes;
     }

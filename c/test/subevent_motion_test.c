@@ -84,7 +84,9 @@ static int read_case(FILE* fp, TestCase* tc)
     return 1;
 }
 
-// 由每一步的时间戳还原工程的时序描述：time_per_channel（us）与 subevent 间隔 t_mes（us）
+// 由每个 mode-2 步的时间戳还原工程的时序描述：每个 subevent 开头插入一个 mode0 步，
+// time_per_channel（us，含 mode0）与 subevent 间隔 t_mes（us）
+#define MODE0_STEP_US 483
 static int build_channel_select(const TestCase* tc, channel_select_t* cfg, uint8_t* hop, uint8_t* per_subevent,
                                 uint16_t* time_per_channel)
 {
@@ -101,15 +103,21 @@ static int build_channel_select(const TestCase* tc, channel_select_t* cfg, uint8
         }
     }
     long t_mes = -1;
+    unsigned step = 0;
     hop[0] = tc->channel[0];                                // mode0 占位，算法不使用
     for (unsigned n = 0; n < tc->step_num; n++) {
+        bool first_in_subevent = (n == 0) || (tc->subevent[n] != tc->subevent[n - 1]);
+        bool last_in_subevent = (n + 1 == tc->step_num) || (tc->subevent[n + 1] != tc->subevent[n]);
+        if (first_in_subevent) {
+            time_per_channel[step++] = MODE0_STEP_US;       // subevent 开头的 mode0
+            per_subevent[tc->subevent[n]]++;
+        }
         hop[n + 1] = tc->channel[n];
         per_subevent[tc->subevent[n]]++;
-        bool last_in_subevent = (n + 1 == tc->step_num) || (tc->subevent[n + 1] != tc->subevent[n]);
-        time_per_channel[n] = (uint16_t)(last_in_subevent ? step_us : t_us[n + 1] - t_us[n]);
+        time_per_channel[step++] = (uint16_t)(last_in_subevent ? step_us : t_us[n + 1] - t_us[n]);
         if (last_in_subevent && (n + 1 < tc->step_num)) {
-            long gap = t_us[n + 1] - t_us[n] - step_us;
-            if ((t_mes >= 0) && (gap != t_mes)) {
+            long gap = t_us[n + 1] - t_us[n] - step_us - MODE0_STEP_US;
+            if ((gap < 0) || ((t_mes >= 0) && (gap != t_mes))) {
                 return -1;                                  // 各 subevent 间隔不相等，无法用单个 t_mes 表示
             }
             t_mes = gap;
@@ -137,7 +145,7 @@ static int run_case(TestCase* tc, SubeventMotionCtx* ctx, SubeventMotionResult* 
     static complex iq_buf[ALG_CHANNEL_NUM];
     uint8_t hop[MAX_STEP_NUM + 1];
     uint8_t per_subevent[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
-    uint16_t time_per_channel[MAX_STEP_NUM];
+    uint16_t time_per_channel[MAX_STEP_NUM + SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
     channel_select_t cfg;
 
     // 外部存储中的 IQ：按信道号排列，未测量的信道为 0
@@ -172,6 +180,20 @@ static int run_case(TestCase* tc, SubeventMotionCtx* ctx, SubeventMotionResult* 
     return 0;
 }
 
+// channel_select_t 不满足 ch_num = 1 + sum(ch_num_per_subevent[s] - 1) 时，初始化必须返回参数错误
+static int check_invalid_channel_select(SubeventMotionCtx* ctx)
+{
+    uint8_t hop[4] = {10, 11, 12, 13};
+    uint8_t per_subevent[2] = {2, 3};                       // 含 mode0：mode-2 共 1 + 2 = 3 步
+    uint16_t time_per_channel[5] = {483, 715, 483, 715, 715};
+    channel_select_t cfg = {4, 2, 40000, hop, NULL, per_subevent, time_per_channel};
+    int ok = (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_SUCCESS);
+    cfg.ch_num = 5;                                          // 错误：把每个 mode0 都算进了 ch_num
+    ok = ok && (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_INVALID_PARAM);
+    printf("%-26s %s\n\n", "channel_select_check", ok ? "PASS" : "FAIL");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char** argv)
 {
     static TestCase tc;
@@ -191,6 +213,7 @@ int main(int argc, char** argv)
            SUBEVENT_MOTION_MAX_SUBEVENT_NUM);
     printf("%-26s %9s %9s %6s %6s %5s %10s %10s  %s\n", "case", "v_c", "v_py", "score", "valid", "st",
            "phase_err", "iq_relerr", "result");
+    fail_num += check_invalid_channel_select(&ctx);
     int rc;
     while ((rc = read_case(fp, &tc)) == 1) {
         if (tc.orders != SUBEVENT_MOTION_PAIR_ORDER || tc.per_path != 0) {

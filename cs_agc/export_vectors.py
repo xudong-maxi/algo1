@@ -53,7 +53,7 @@ def write_all_cases(fp, order, cfg):
     write_case(fp, f"o{order}_low_snr_m3dB", generate(rng, SimCfg(n_se=3, snr_db=-3.0)), cfg)
     write_case(fp, f"o{order}_severe_mp_snr5",
                generate(rng, SimCfg(n_se=3, snr_db=5.0, channel=SCENARIOS["MP_severe"])), cfg)
-    tc = dict(t_meas=565e-6, t_gap=150e-6, t_step=715e-6, se_gap=40e-3)
+    tc = dict(t_meas=565e-6, t_gap=150e-6, t_step=715e-6, se_gap=40e-3, mode0=483e-6)
     proc = parse_log("data/sample_log.txt")[0]
     write_case(fp, f"o{order}_log_proc7121", build_measurement(proc, [25, 25, 22], 1, tc), cfg)
     proc["iq"] = {k: v for k, v in proc["iq"].items() if k[1] == 0}   # remote IQ missing

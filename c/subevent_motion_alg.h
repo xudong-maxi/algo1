@@ -23,7 +23,14 @@
  *   for (p = 0; p < path_num; p++) subevent_motion_iq_compensation(&ctx, iq_p);    // 第 3 遍，之后做 IFFT
  *
  * 前提：AGC 按设备设定、每个 subevent 只设一次，所有天线路径共用同一组 subevent 相位；
- *       每个信道在一次测量中最多出现一次（mode0 位于 ch_hop_orders[0]，不参与计算）。
+ *       每个信道在一次测量中最多出现一次。
+ *
+ * channel_select_t 约定（以 72 个 mode-2 频点、3 个 subevent 为例）：
+ *   - 每个 subevent 的第一步是 mode0；ch_num_per_subevent 含 mode0，例如 26, 26, 23；
+ *   - time_per_channel 按时间顺序给出每一步的时长 (us)，含每个 subevent 的 mode0，共 75 项；
+ *   - ch_hop_orders 只在第 0 项放一个 mode0，其后依次是 72 个 mode-2 信道，ch_num = 73；
+ *   - t_mes 为上一个 subevent 结束到下一个 subevent（其 mode0）开始的间隔 (us)。
+ *   不满足 ch_num = 1 + sum(ch_num_per_subevent[s] - 1) 时，subevent_motion_init 返回参数错误。
  */
 
 /* 编译期上限，可在编译选项中覆盖 */

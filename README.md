@@ -15,7 +15,7 @@ python -m cs_agc.run_sim --trials 400 --out results   # 4 核约 3 分钟
 
 ```bash
 python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedure 一张图 + CSV
-# 常用参数：--split 25,25,22  --se-gap-ms 40  --per-ant  --combine mul|conj  --n-mode0 1
+# 常用参数：--split 25,25,22  --se-gap-ms 40  --mode0-us 483  --per-ant  --combine mul|conj  --n-mode0 1
 ```
 - 解析 `ch_idx_list`（第 1 个为 mode0，跳过）与 4 路 `[iq_data]`（R=0 本地 / R=1 远端，按信道号索引），PBR 取 local×remote。
 - log 打印截断造成的损坏条目会被丢弃（置 0，不参与配对和 IFFT），图标题里的 `missing` 为丢弃数。

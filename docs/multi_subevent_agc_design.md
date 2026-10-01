@@ -236,7 +236,13 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 ## 7. MCU 实现：`c/subevent_motion_alg.c`（128 MHz，4 条天线路径）
 
 ### 7.1 与工程对齐的接口
-C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channel_select_t`（跳频表、每个 subevent 的信道数、每个信道的测量时长、subevent 间隔），IQ 按信道号排列（`complex iq[ALG_CHANNEL_NUM]`，未测量的信道不参与计算），返回 `errcode_t`。时间约定与 `motion_effect_analyze` 完全相同（`ch_hop_orders[0]` 为 mode0，不参与计算）。
+C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channel_select_t`（跳频表、每个 subevent 的信道数、每个信道的测量时长、subevent 间隔），IQ 按信道号排列（`complex iq[ALG_CHANNEL_NUM]`，未测量的信道不参与计算），返回 `errcode_t`。`channel_select_t` 的约定（已与需求方确认，以 72 个 mode‑2 频点、3 个 subevent 为例）：
+* 每个 subevent 的第一步是 mode0，`ch_num_per_subevent` 包含它，例如 26, 26, 23；
+* `time_per_channel` 按时间顺序给出每一步的时长（µs），包含每个 subevent 的 mode0，共 75 项；
+* `ch_hop_orders` 只在第 0 项放一个 mode0，其后依次是 72 个 mode‑2 信道，`ch_num` = 73；
+* `t_mes` 为上一个 subevent 结束到下一个 subevent（从它的 mode0 开始）开始的间隔（µs）。
+
+模块会检查 `ch_num = 1 + Σ(ch_num_per_subevent[s] − 1)`，不满足时 `subevent_motion_init` 返回参数错误。
 
 任何时刻内存里只需放一路 IQ，每路 IQ 按顺序提供 3 遍：
 
@@ -364,7 +370,15 @@ C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channe
 
 原算法在 path2 上估出 −0.60 m/s，和其他三路不一致。path2 是发起端天线 1，它在 SE1 的本地 IQ 幅度极低（见 §9），印证了第 3 条结论。真实距离未知，所以无法判断哪个测距值更准。
 
-### 10.5 资源对比（128 MHz，4 条路径）
+### 10.5 原代码的时间戳错位问题
+按上面确认的 `channel_select_t` 约定（`time_per_channel` 与 `ch_num_per_subevent` 都包含每个 subevent 开头的 mode0），原 `get_chhop_pos_and_pdiff` 和 `motion_iq_compensation` 的时间计算会错位：
+* `step_abs_time_us` 按「包含 mode0 的步」编号，但 `channel_hop_pos` 记录的是「mode‑2 步」的序号（`t − 1`），两套编号直接混用；
+* 结果是：SE0 内每个信道的时间提前 1 步（约 0.7 ms），且在每 5 步一次的 823 µs 处有约 0.1 ms 的抖动；SE1 的第 1 个、SE2 的前 2 个 mode‑2 信道会拿到**上一个 subevent 里某一步的时间**，误差约 40 ms。
+* 影响：涉及这几个信道的相邻信道对，Δt 错了约 40 ms，拟合时相当于离群点；补偿时这几个信道的相位误差约为 4π·f·v·0.04/c ≈ 4 rad/(m/s)，静止时没有影响，运动时会明显恶化。
+
+§10.1–10.4 的对比里，原算法的移植版使用的是**正确**的时间戳，所以对原算法是偏有利的；`subevent_motion_alg` 已按正确约定实现。
+
+### 10.6 资源对比（128 MHz，4 条路径）
 
 | | 原 `motion_correct_alg` | JDPS `PAIR_ORDER=2`（默认） | JDPS `PAIR_ORDER=1` |
 |---|---|---|---|

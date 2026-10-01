@@ -116,7 +116,7 @@ def cdf_plot(r, title, path):
 
 
 def real_log(out):
-    tc = dict(t_meas=565e-6, t_gap=150e-6, t_step=715e-6, se_gap=40e-3)
+    tc = dict(t_meas=565e-6, t_gap=150e-6, t_step=715e-6, se_gap=40e-3, mode0=483e-6)
     ms = build_measurement(parse_log("data/sample_log.txt")[0], [25, 25, 22], 1, tc)
     y_mca, sp = motion_correct_alg(ms)
     rows = {"raw": dict(d=estimate_distance(ms.y, ms.ch), v="-"),
