@@ -93,6 +93,8 @@ def legacy(meas, v_grid, sel=None):
 class JdpsCfg:
     v_max: float = 10.0
     v_step: float = 0.25
+    v_guard: float = 1.0         # search beyond +-v_max so true |v| ~ v_max is not an edge hit
+    min_v_score: float = 5.0     # velocity accepted if noise-normalised peak score >= this
     orders: tuple = (1, 2)       # adjacent-channel spacings used (MHz)
     n_power_iter: int = 8
     n_refine_iter: int = 3
@@ -100,7 +102,7 @@ class JdpsCfg:
 
     @property
     def v_grid(self):
-        n = int(round(self.v_max / self.v_step))
+        n = int(round((self.v_max + self.v_guard) / self.v_step))
         return np.arange(-n, n + 1) * self.v_step
 
 
@@ -143,7 +145,29 @@ def phase_sync(Z, n_se, orders, n_power_iter=8, n_refine_iter=3):
     return psi, c
 
 
+def velocity_score(metric_peak, z, g, n_groups):
+    """Noise-normalised peak score (K independent).
+
+    For pure noise each |group sum| is Rayleigh with mean sqrt(pi/4*S_g) and
+    variance (1-pi/4)*S_g, S_g = sum |z|^2 of the group. score = (peak - mu) / sigma
+    stays below ~4.5 for noise whatever the number of segments.
+    Returns None when there is no signal energy at all.
+    """
+    S = np.stack([np.bincount(g, weights=np.abs(za) ** 2, minlength=n_groups) for za in z])
+    sigma = np.sqrt(((1 - np.pi / 4) * S).sum())
+    if sigma == 0:
+        return None
+    mu = np.sqrt(np.pi / 4 * S).sum()
+    return (metric_peak - mu) / sigma
+
+
 def jdps(meas, cfg: JdpsCfg = JdpsCfg()):
+    """Returns (compensated y, info).
+
+    info: v_hat (raw search result), v_used (applied: v_hat if valid else 0),
+    v_valid, v_score, v_at_edge, psi, metric, v_grid, status ('ok' / 'no_signal').
+    With status 'no_signal' (all-zero input, e.g. remote IQ missing) y is returned unchanged.
+    """
     y, f, ch, se = meas.y, meas.f, meas.ch, meas.se
     tau = meas.t - meas.t_ref
     K = int(se.max()) + 1
@@ -166,8 +190,19 @@ def jdps(meas, cfg: JdpsCfg = JdpsCfg()):
         metric += np.abs(E @ (z[a][:, None] * onehot)).sum(1)
     v_hat = parabolic_peak(v_grid, metric)
 
-    # ---- stage 2: Doppler + range-migration compensation with v_hat
-    y1 = y * doppler_phasor(f, tau, v_hat)
+    # ---- reliability: no energy -> give up; weak peak or peak on the grid edge -> v = 0
+    score = velocity_score(metric.max(), z, g, n_groups) if len(g) else None
+    if score is None:
+        K0 = np.zeros((A, K)) if cfg.per_ant_theta else np.zeros(K)
+        return y.copy(), dict(status="no_signal", v_hat=np.nan, v_used=0.0, v_valid=False,
+                              v_score=0.0, v_at_edge=False, psi=K0, metric=metric, v_grid=v_grid)
+    k_peak = int(np.argmax(metric))
+    at_edge = k_peak in (0, len(v_grid) - 1)
+    v_valid = bool(score >= cfg.min_v_score and not at_edge)
+    v_used = v_hat if v_valid else 0.0
+
+    # ---- stage 2: Doppler + range-migration compensation with v_used
+    y1 = y * doppler_phasor(f, tau, v_used)
 
     # ---- stage 3: AGC (+ inter-subevent Doppler residual) phase estimation
     z1 = y1[:, m] * np.conj(y1[:, n])
@@ -183,4 +218,5 @@ def jdps(meas, cfg: JdpsCfg = JdpsCfg()):
     else:
         psi, _ = phase_sync(Zg, K, cfg.orders, cfg.n_power_iter, cfg.n_refine_iter)
         y2 = y1 * np.exp(-1j * psi[se])[None, :]
-    return y2, dict(v_hat=v_hat, psi=psi, metric=metric, v_grid=v_grid)
+    return y2, dict(status="ok", v_hat=v_hat, v_used=v_used, v_valid=v_valid, v_score=float(score),
+                    v_at_edge=at_edge, psi=psi, metric=metric, v_grid=v_grid)

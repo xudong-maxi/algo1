@@ -27,6 +27,7 @@ from .sim_model import C, CS_CHANNELS, DF, F0
 RE_PROC = re.compile(r"proc_count\s*=\s*(\d+),\s*ch_num\s*=\s*(\d+)")
 RE_CHLIST = re.compile(r"ch_idx_list:\s*([0-9a-fA-F,\s]+)")
 RE_IQ_HDR = re.compile(r"path:(\d+),\[iq_data\](\d+),(\d+),(\d+),")
+RE_TS_PAIR = re.compile(r"local iq ts:\s*(\d+).*remote iq ts:\s*(\d+)")
 RE_IQ_ENT = re.compile(r"\[(\d+)\]:(-?\d+);(-?\d+),(-?\d+)")
 
 
@@ -34,13 +35,18 @@ RE_IQ_ENT = re.compile(r"\[(\d+)\]:(-?\d+);(-?\d+),(-?\d+)")
 # parsing
 # --------------------------------------------------------------------------- #
 def parse_log(path):
-    """Returns list of procedures: dict(ts, ch_num, hop, iq{(path, role): {ch: complex}})."""
+    """Returns list of procedures: dict(ts, remote_ts, ch_num, hop, iq{(path, role): {ch: complex}}).
+
+    Local IQ (role 0) is matched by the procedure ts, remote IQ (role 1) by the
+    remote ts announced in "local iq ts: X, ..., remote iq ts: Y" (defaults to X).
+    """
     procs, cur = [], None
     with open(path, errors="replace") as fp:
         for line in fp:
             m = RE_PROC.search(line)
             if m:
-                cur = dict(ts=int(m.group(1)), ch_num=int(m.group(2)), hop=None, iq={})
+                cur = dict(ts=int(m.group(1)), remote_ts=int(m.group(1)), ch_num=int(m.group(2)),
+                           hop=None, iq={})
                 procs.append(cur)
                 continue
             m = RE_CHLIST.search(line)
@@ -48,10 +54,17 @@ def parse_log(path):
                 vals = [int(x, 16) for x in m.group(1).replace(" ", "").strip(",").split(",") if x]
                 cur["hop"] = vals[:cur["ch_num"]]
                 continue
+            m = RE_TS_PAIR.search(line)
+            if m:
+                tgt = next((p for p in reversed(procs) if p["ts"] == int(m.group(1))), None)
+                if tgt is not None:
+                    tgt["remote_ts"] = int(m.group(2))
+                continue
             m = RE_IQ_HDR.search(line)
             if m:
                 ant, role, ts = int(m.group(1)), int(m.group(3)), int(m.group(4))
-                tgt = next((p for p in reversed(procs) if p["ts"] == ts), None)
+                key = "remote_ts" if role == 1 else "ts"
+                tgt = next((p for p in reversed(procs) if p[key] == ts), None)
                 if tgt is None:
                     continue
                 ent = {}
@@ -80,13 +93,15 @@ def build_measurement(proc, split, n_mode0, tcfg, combine="mul"):
                 y[ai, n] = loc[ch] * r
             else:
                 missing.append((a, int(ch)))       # left as 0 -> ignored by pairs / IFFT
+    # antennas whose local or remote IQ line is absent from the log
+    no_iq = [a for a in ants if not proc["iq"].get((a, 0)) or not proc["iq"].get((a, 1))]
     se = np.repeat(np.arange(len(split)), split)
     idx = np.concatenate([np.arange(c) for c in split])
     se_dur = np.array(split) * tcfg["t_step"] - tcfg["t_gap"]
     se_start = np.concatenate([[0.0], np.cumsum(se_dur + tcfg["se_gap"])[:-1]])
     t = se_start[se] + idx * tcfg["t_step"] + tcfg["t_meas"] / 2
     return SimpleNamespace(y=y, ch=hop, f=F0 + hop * DF, t=t, se=se, t_ref=t.mean(),
-                           ants=ants, missing=missing)
+                           ants=ants, missing=missing, no_iq=no_iq)
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +117,8 @@ def plot_proc(ms, y_c, info, d_before, d_after, title, path):
     dist, prof = delay_profile(to_grid(y_c, ms.ch))
     d_slope = dist[np.argmax(prof[:len(dist) // 2])]
     ref = np.exp(1j * 4 * np.pi * ms.f * d_slope / C)
-    fig, ax = plt.subplots(A, 3, figsize=(17, 3.1 * A + 0.8), squeeze=False)
+    fig, ax = plt.subplots(A, 4, figsize=(21, 3.1 * A + 0.8), squeeze=False,
+                           gridspec_kw=dict(width_ratios=[1, 1, 1, 0.8]))
     for a in range(A):
         for col, (yy, lab) in enumerate([(ms.y[a], "before"), (y_c[a], "after JDPS")]):
             axx = ax[a, col]
@@ -128,8 +144,20 @@ def plot_proc(ms, y_c, info, d_before, d_after, title, path):
         axx.set_xlabel("distance [m] (uncalibrated)", fontsize=8)
         if a == 0:
             axx.legend(fontsize=7)
+        if a > 0:
+            ax[a, 3].axis("off")
+    # velocity spectrum: shows why v was accepted / rejected
+    axx = ax[0, 3]
+    axx.plot(info["v_grid"], info["metric"], color="#1f77b4")
+    if np.isfinite(info["v_hat"]):
+        axx.axvline(info["v_hat"], color="#2ca02c" if info["v_valid"] else "#d62728", ls="--",
+                    label=f"v_est={info['v_hat']:+.2f}  score={info['v_score']:.1f}")
+    axx.set_title("velocity spectrum (search metric)", fontsize=9)
+    axx.set_xlabel("v [m/s]", fontsize=8), axx.grid(alpha=0.3), axx.legend(fontsize=7)
     psi = np.atleast_1d(info["psi"])
-    fig.suptitle(f"{title}   v̂={info['v_hat']:+.2f} m/s   ψ=[{', '.join(f'{p:+.2f}' for p in np.ravel(psi))}] rad   "
+    v_state = "valid" if info["v_valid"] else ("EDGE -> v=0" if info["v_at_edge"] else "LOW SCORE -> v=0")
+    fig.suptitle(f"{title}   v_used={info['v_used']:+.2f} m/s ({v_state}, score={info['v_score']:.1f})   "
+                 f"ψ=[{', '.join(f'{p:+.2f}' for p in np.ravel(psi))}] rad   "
                  f"d(before)={d_before:.2f} m  d(after)={d_after:.2f} m   missing={len(ms.missing)}",
                  fontsize=10)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
@@ -167,11 +195,19 @@ def main():
             except ValueError as e:
                 print("skip:", e)
                 continue
+            if ms.no_iq:
+                print(f"warn: proc {proc['ts']}: local/remote IQ missing for path(s) {ms.no_iq}"
+                      f" (remote ts {proc['remote_ts']})")
             y_c, info = jdps(ms, jcfg)
+            if info["status"] == "no_signal":
+                print(f"skip: proc {proc['ts']}: no usable IQ (all zero after local x remote)")
+                continue
             d_b, d_a = estimate_distance(ms.y, ms.ch), estimate_distance(y_c, ms.ch)
             name = f"{stem}_proc{proc['ts']}"
             plot_proc(ms, y_c, info, d_b, d_a, name, os.path.join(a.out, name + ".png"))
-            rows.append(dict(log=stem, proc=proc["ts"], v_hat=round(float(info["v_hat"]), 3),
+            rows.append(dict(log=stem, proc=proc["ts"], v_est=round(float(info["v_hat"]), 3),
+                             v_used=round(float(info["v_used"]), 3), v_valid=int(info["v_valid"]),
+                             v_score=round(info["v_score"], 2), no_iq_paths=len(ms.no_iq),
                              psi=" ".join(f"{p:.3f}" for p in np.ravel(info["psi"])),
                              d_before=round(d_b, 3), d_after=round(d_a, 3), missing=len(ms.missing)))
             print(rows[-1])

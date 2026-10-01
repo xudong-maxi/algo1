@@ -1,2 +1,2 @@
-log,proc,v_hat,psi,d_before,d_after,missing
-sample_log,7121,0.221,0.000 2.111 -3.078,1.472,1.387,2
+log,proc,v_est,v_used,v_valid,v_score,no_iq_paths,psi,d_before,d_after,missing
+sample_log,7121,0.221,0.221,1,9.46,0,0.000 2.111 -3.078,1.472,1.387,2

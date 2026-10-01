@@ -5,7 +5,8 @@
  *
  * Usage: jdps_test vectors.txt
  * Pass criteria per case:
- *   |v_c - v_py|                    < 0.01 m/s
+ *   status and v_valid identical, |score_c - score_py| < 1e-3 * max(1, |score|)
+ *   |v_c - v_py| (applied velocity) < 0.01 m/s
  *   max wrapped |psi_c - psi_py|    < 0.01 rad
  *   ||iq_c - iq_py|| / ||iq_py||    < 1e-3
  */
@@ -28,6 +29,10 @@ typedef struct {
     uint8_t          seg[JDPS_MAX_STEPS];
     float            time_s[JDPS_MAX_STEPS];
     complex        iq[JDPS_MAX_ANT][JDPS_MAX_STEPS];
+    int              exp_status;
+    int              exp_valid;
+    double           exp_score;
+    double           exp_v_est;
     double           exp_v;
     double           exp_psi[JDPS_MAX_ANT][JDPS_MAX_SEG];
     double           exp_iq[JDPS_MAX_ANT][JDPS_MAX_STEPS][2];
@@ -42,20 +47,23 @@ static int expect_tag(FILE *fp, const char *tag)
 /** Reads one case; returns 0 at end of file. */
 static int read_case(FILE *fp, test_case_t *tc)
 {
-    float vmax, vstep;
+    float vmax, vguard, vstep, vscore;
     unsigned orders, pit, rit, perant, A, N, K, u;
 
     if (fscanf(fp, " case %63s", tc->name) != 1) {
         return 0;
     }
     if (!expect_tag(fp, "cfg") ||
-        fscanf(fp, "%f %f %u %u %u %u", &vmax, &vstep, &orders, &pit, &rit, &perant) != 6 ||
+        fscanf(fp, "%f %f %f %f %u %u %u %u", &vmax, &vguard, &vstep, &vscore, &orders, &pit, &rit,
+               &perant) != 8 ||
         !expect_tag(fp, "dims") || fscanf(fp, "%u %u %u", &A, &N, &K) != 3) {
         return -1;
     }
     tc->cfg = jdps_default_cfg();      /* frequency plan: BLE CS defaults */
     tc->cfg.v_max_mps = vmax;
+    tc->cfg.v_guard_mps = vguard;
     tc->cfg.v_step_mps = vstep;
+    tc->cfg.min_v_score = vscore;
     tc->cfg.num_orders = (uint8_t)orders;
     tc->cfg.power_iter_num = (uint8_t)pit;
     tc->cfg.refine_iter_num = (uint8_t)rit;
@@ -74,6 +82,9 @@ static int read_case(FILE *fp, test_case_t *tc)
     for (unsigned a = 0; a < A; a++)
         for (unsigned n = 0; n < N; n++)
             if (fscanf(fp, "%f %f", &tc->iq[a][n].r, &tc->iq[a][n].i) != 2) return -1;
+    if (!expect_tag(fp, "exp_status") ||
+        fscanf(fp, "%d %d %lf %lf", &tc->exp_status, &tc->exp_valid, &tc->exp_score, &tc->exp_v_est) != 4)
+        return -1;
     if (!expect_tag(fp, "exp_v") || fscanf(fp, "%lf", &tc->exp_v) != 1) return -1;
     if (!expect_tag(fp, "exp_psi")) return -1;
     for (unsigned a = 0; a < A; a++)
@@ -104,7 +115,8 @@ int main(int argc, char **argv)
         perror("open vectors");
         return 2;
     }
-    printf("%-26s %9s %9s %10s %10s  %s\n", "case", "v_c", "v_py", "psi_err", "iq_relerr", "result");
+    printf("%-26s %9s %9s %6s %6s %5s %10s %10s  %s\n", "case", "v_c", "v_py", "score", "valid", "st",
+           "psi_err", "iq_relerr", "result");
     int rc;
     while ((rc = read_case(fp, &tc)) == 1) {
         jdps_meas_t meas = {
@@ -130,14 +142,13 @@ int main(int argc, char **argv)
             }
         }
         double iq_rel = sqrt(err2 / (ref2 > 0 ? ref2 : 1.0));
-        int ok = st == JDPS_OK && fabs(res.v_mps - tc.exp_v) < TOL_V_MPS &&
+        double score_tol = 1e-3 * (fabs(tc.exp_score) > 1.0 ? fabs(tc.exp_score) : 1.0);
+        int ok = (int)st == tc.exp_status && res.v_valid == tc.exp_valid &&
+                 fabs(res.v_score - tc.exp_score) < score_tol &&
+                 fabs(res.v_mps - tc.exp_v) < TOL_V_MPS &&
                  psi_err < TOL_PSI_RAD && iq_rel < TOL_IQ_REL;
-        printf("%-26s %+9.4f %+9.4f %10.2e %10.2e  %s", tc.name, res.v_mps, tc.exp_v,
-               psi_err, iq_rel, ok ? "PASS" : "FAIL");
-        if (st != JDPS_OK) {
-            printf(" (status %d)", (int)st);
-        }
-        printf("\n");
+        printf("%-26s %+9.4f %+9.4f %6.1f %6d %5d %10.2e %10.2e  %s\n", tc.name, res.v_mps, tc.exp_v,
+               res.v_score, res.v_valid, (int)st, psi_err, iq_rel, ok ? "PASS" : "FAIL");
         num_cases++;
         num_fail += !ok;
     }

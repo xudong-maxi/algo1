@@ -19,7 +19,8 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
 ```
 - 解析 `ch_idx_list`（第 1 个为 mode0，跳过）与 4 路 `[iq_data]`（R=0 本地 / R=1 远端，按信道号索引），PBR 取 local×remote。
 - log 打印截断造成的损坏条目会被丢弃（置 0，不参与配对和 IFFT），图标题里的 `missing` 为丢弃数。
-- 每张图：每路天线一行，分别为补偿前相位、补偿后相位（去掉最强径斜率，按 subevent 着色）、IFFT 距离谱对比。
+- 每张图：每路天线一行，分别为补偿前相位、补偿后相位（去掉最强径斜率，按 subevent 着色）、IFFT 距离谱对比；右上角为速度谱，标题给出 v 是否可信（score、是否落在边界）。
+- 远端 IQ 按 log 中 `local iq ts / remote iq ts` 的对应关系配对；某路天线缺本地或远端 IQ 时打印 warn，全部缺失（全 0）时跳过该次测量。
 
 ## C 模块（MCU 移植，协议无关）
 

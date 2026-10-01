@@ -59,7 +59,7 @@ extern "C" {
 #define JDPS_MAX_STEPS      80u   /**< ranging steps per procedure          */
 #define JDPS_MAX_SEG         8u    /**< segments per procedure              */
 #define JDPS_MAX_ORDER      2u    /**< largest channel-index spacing paired */
-#define JDPS_MAX_V_POINTS   161u  /**< velocity grid points                 */
+#define JDPS_MAX_V_POINTS   161u  /**< velocity grid points, incl. guard    */
 #define JDPS_MAX_CHANNELS   80u   /**< channel index range 0..MAX_CHANNELS-1 */
 
 #define JDPS_MAX_PAIRS      (JDPS_MAX_STEPS * JDPS_MAX_ORDER)
@@ -71,15 +71,21 @@ extern "C" {
 typedef enum {
     JDPS_OK = 0,
     JDPS_ERR_PARAM,          /**< NULL pointer or size out of range       */
-    JDPS_ERR_NO_PAIRS        /**< no adjacent channel pair found          */
+    JDPS_ERR_NO_PAIRS,       /**< no adjacent channel pair found          */
+    JDPS_ERR_NO_SIGNAL       /**< all pair products zero (e.g. remote IQ
+                                  missing); iq left untouched              */
 } jdps_status_t;
 
 /** Algorithm configuration (use jdps_default_cfg() for recommended values). */
 typedef struct {
     float   chan0_freq_hz;      /**< frequency of channel index 0 [Hz]         */
     float   chan_spacing_hz;    /**< channel spacing [Hz]                      */
-    float   v_max_mps;          /**< velocity search range: [-v_max, +v_max]  */
+    float   v_max_mps;          /**< supported velocity range: [-v_max, +v_max] */
+    float   v_guard_mps;        /**< extra search margin beyond v_max, so a true
+                                     |v| close to v_max is not an edge hit      */
     float   v_step_mps;         /**< velocity grid step (0.25..1.0)           */
+    float   min_v_score;        /**< velocity accepted if score >= this,
+                                     otherwise v = 0 is applied (see result)  */
     uint8_t num_orders;         /**< index spacings paired: 1..num_orders     */
     uint8_t power_iter_num;     /**< power iterations per phase-sync round    */
     uint8_t refine_iter_num;    /**< phase-sync refinement rounds             */
@@ -100,8 +106,17 @@ typedef struct {
 } jdps_meas_t;
 
 typedef struct {
-    float v_mps;                               /**< estimated radial velocity [m/s] */
-    float psi_rad[JDPS_MAX_ANT][JDPS_MAX_SEG]; /**< removed segment phase [rad]
+    float   v_mps;                             /**< velocity applied [m/s]:
+                                                    v_est_mps if v_valid, else 0     */
+    float   v_est_mps;                         /**< raw search result [m/s]          */
+    float   v_score;                           /**< noise-normalised peak score:
+                                                    (peak - mu) / sigma, mu/sigma of
+                                                    the search metric for pure noise;
+                                                    <~4.5 for noise for any segment
+                                                    count                            */
+    uint8_t v_valid;                           /**< 1: score >= min_v_score and the
+                                                    peak is not on the grid edge     */
+    float   psi_rad[JDPS_MAX_ANT][JDPS_MAX_SEG]; /**< removed segment phase [rad]
                                                     (AGC + inter-segment Doppler),
                                                     psi[.][0] = 0                  */
 } jdps_result_t;
@@ -126,7 +141,8 @@ typedef struct {
 
 /**
  * Recommended configuration: BLE CS frequency plan (2402 MHz + idx * 1 MHz),
- * +-10 m/s search, 0.25 m/s grid, index spacings 1 and 2.
+ * +-10 m/s (+1 m/s guard) search, 0.25 m/s grid, index spacings 1 and 2,
+ * velocity accepted for score >= 5.
  * For another protocol overwrite chan0_freq_hz / chan_spacing_hz.
  */
 jdps_cfg_t jdps_default_cfg(void);

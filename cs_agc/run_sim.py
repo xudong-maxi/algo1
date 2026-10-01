@@ -53,7 +53,7 @@ def run_methods(ms, jcfg: JdpsCfg):
     yl, _, vl = legacy(ms, vg)
     out["legacy_global"] = (yl, ms.ch, vl)
     yj, info = jdps(ms, jcfg)
-    out["jdps"] = (yj, ms.ch, info["v_hat"])
+    out["jdps"] = (yj, ms.ch, info["v_used"])
     return out
 
 
