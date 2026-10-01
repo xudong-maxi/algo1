@@ -87,6 +87,74 @@ def legacy(meas, v_grid, sel=None):
 
 
 # --------------------------------------------------------------------------- #
+# reference: the project's existing motion_correct_alg.c, ported line by line
+# --------------------------------------------------------------------------- #
+MCA_CARRIER_FREQ = 2.45e9           # CARRIER_FREQ
+MCA_MAX_SPEED = 10.0                # MOTION_MAX_SPEED
+MCA_SPEED_RESOLUTION = 0.2          # MOTION_SPEED_RESOLUTION
+MCA_IQ_AMP_MIN_LIMIT = 200.0        # IQ_AMP_MIN_LIMIT
+MCA_CHANNEL_NUM = 80                # ALG_CHANNEL_NUM
+
+
+def motion_correct_alg_path(iq_ch, step_time_s, ch_hop_pos):
+    """motion_effect_analyze + motion_iq_compensation for ONE antenna path.
+
+    iq_ch       : (80,) complex, IQ indexed by channel (0 where not measured)
+    step_time_s : (N,) absolute start time of every mode-2 step (s), incl. t_mes gaps
+    ch_hop_pos  : (80,) step index of every channel, -1 if not measured
+    Returns (compensated iq_ch, speed as reported by ndtft).
+    """
+    # get_chhop_pos_and_pdiff
+    amp = np.abs(iq_ch)
+    thr = min(MCA_IQ_AMP_MIN_LIMIT, amp.sum() / MCA_CHANNEL_NUM / 2)
+    k, pdiff = [], []
+    for f in range(1, MCA_CHANNEL_NUM):
+        if ch_hop_pos[f] >= 0 and ch_hop_pos[f - 1] >= 0 and amp[f] > thr and amp[f - 1] > thr:
+            k.append(step_time_s[ch_hop_pos[f]] - step_time_s[ch_hop_pos[f - 1]])
+            pdiff.append(np.angle(iq_ch[f] * np.conj(iq_ch[f - 1])))
+    if len(k) < 2:
+        return iq_ch.copy(), np.nan
+    # ndtft: maximise |sum exp(j(y - slope * x))| over speed in [-10, 10], step 0.2, no interpolation
+    k, pdiff = np.array(k), np.array(pdiff)
+    slope_factor = 4 * np.pi * MCA_CARRIER_FREQ / C
+    n_steps = int(np.floor(2 * MCA_MAX_SPEED / MCA_SPEED_RESOLUTION + 1e-5))
+    speeds = -MCA_MAX_SPEED + np.arange(n_steps + 1) * MCA_SPEED_RESOLUTION
+    mags = np.abs(np.exp(1j * (pdiff[None, :] - np.outer(speeds * slope_factor, k))).sum(1)) ** 2
+    best = int(np.argmax(mags))                      # first maximum, like the C loop with '>'
+    slope = speeds[best] * slope_factor
+    # motion_iq_compensation: iq *= exp(-j * slope * t_abs)
+    out = iq_ch.copy()
+    for f in range(MCA_CHANNEL_NUM):
+        if ch_hop_pos[f] >= 0:
+            out[f] = iq_ch[f] * np.exp(-1j * slope * step_time_s[ch_hop_pos[f]])
+    return out, speeds[best]
+
+
+def motion_correct_alg(meas, iq_scale=1e5):
+    """Existing project pipeline applied to every antenna path separately (no AGC handling).
+
+    meas.y is scaled by iq_scale so that the absolute amplitude limit (200) acts as on real
+    data (|local * remote| ~ 1e5). Returns (compensated y in hop order, per-path speeds),
+    speeds converted to this simulator's sign convention (positive = distance increasing).
+    """
+    N = len(meas.ch)
+    ch_hop_pos = -np.ones(MCA_CHANNEL_NUM, int)
+    for n, c in enumerate(meas.ch):
+        if ch_hop_pos[c] < 0:
+            ch_hop_pos[c] = n
+    step_time = meas.t - meas.t[0]
+    y_out = np.zeros_like(meas.y)
+    speeds = []
+    for a in range(meas.y.shape[0]):
+        iq_ch = np.zeros(MCA_CHANNEL_NUM, complex)
+        iq_ch[meas.ch] = meas.y[a] * iq_scale
+        out, sp = motion_correct_alg_path(iq_ch, step_time, ch_hop_pos)
+        y_out[a] = out[meas.ch] / iq_scale
+        speeds.append(-sp)              # ndtft slope = -4 pi f v / c in this model -> speed = -v
+    return y_out, np.array(speeds)
+
+
+# --------------------------------------------------------------------------- #
 # proposed: Joint Doppler & Phase Stitching (JDPS)
 # --------------------------------------------------------------------------- #
 @dataclass
