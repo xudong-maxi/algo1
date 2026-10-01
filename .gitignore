@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-c/jdps_test
+c/subevent_motion_test_o*
 c/test/vectors.txt
