@@ -244,7 +244,15 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 
 逐天线估计 AGC 相位（`per_ant_phase = 1`）时，`jdps_apply(a)` 可以紧跟在 `jdps_add_phase(a)` 之后，第 2、3 遍合并，每路 IQ 只需提供 2 遍。
 
-内存（`jdps_ctx_t`，不含 IQ）：默认上限下为 11.1 KB；`JDPS_MAX_SEG` 取 4 时为 7.1 KB，取 3 时为 6.5 KB。这些上限都可以在编译参数里覆盖。
+内存（`jdps_ctx_t`，不含 IQ；第 1 遍与第 2 遍的工作区不会同时使用，放在同一个 union 里共用）：
+
+| 编译配置 | ctx 大小 | 说明 |
+|---|---|---|
+| 默认（4 路、72 step、8 segment、2 阶配对、89 个速度点） | 6.1 KB | |
+| `-DJDPS_MAX_SEG=3u` | 5.1 KB | subevent 最多 3 个；结果与默认完全相同 |
+| `-DJDPS_MAX_SEG=3u -DJDPS_MAX_ORDER=1u`，并设 `cfg.num_orders = 1` | 2.8 KB | 只用间隔 1 的相邻对，性能略降（§6.4：SNR 10 dB 时与 genie 偏差 P90 从 0.01 m 变为 0.02 m） |
+
+另外：调用方的单路 IQ 缓冲为 72 × 8 = 576 B；栈峰值在相位同步函数中，`JDPS_MAX_SEG=8` 时约 0.9 KB，`JDPS_MAX_SEG=3` 时约 0.4 KB（x86 上用 -fstack-usage 实测，ARM 上通常更小）。这些上限都可以在编译参数里覆盖。
 
 ### 7.2 复杂度
 周期假设（Cortex‑M4F/M33 float32，含 load/store，偏保守）：复数乘或乘加 8 cycles、复数取模 20 cycles、sincos 60 cycles。

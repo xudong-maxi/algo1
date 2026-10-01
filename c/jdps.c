@@ -243,7 +243,7 @@ jdps_status_t jdps_begin(jdps_ctx_t *ctx, const jdps_cfg_t *cfg, const jdps_layo
 static void calc_pair_products(jdps_ctx_t *ctx, const complex *iq)
 {
     for (uint16_t p = 0; p < ctx->num_pairs; p++) {
-        ctx->pair_prod[p] = cplx_mul_conj(iq[ctx->pair_hi[p]], iq[ctx->pair_lo[p]]);
+        ctx->work.vel.pair_prod[p] = cplx_mul_conj(iq[ctx->pair_hi[p]], iq[ctx->pair_lo[p]]);
     }
 }
 
@@ -255,15 +255,15 @@ static void calc_pair_products(jdps_ctx_t *ctx, const complex *iq)
  */
 static void add_noise_stats(jdps_ctx_t *ctx)
 {
-    float group_power[JDPS_MAX_GROUPS];
-    memset(group_power, 0, ctx->num_groups * sizeof(float));
+    complex *group_power = ctx->work.vel.group_acc;     /* S_g in .r, scratch is free here */
+    memset(group_power, 0, ctx->num_groups * sizeof(complex));
     for (uint16_t p = 0; p < ctx->num_pairs; p++) {
-        const complex z = ctx->pair_prod[p];
-        group_power[ctx->pair_group[p]] += z.r * z.r + z.i * z.i;
+        const complex z = ctx->work.vel.pair_prod[p];
+        group_power[ctx->pair_group[p]].r += z.r * z.r + z.i * z.i;
     }
     for (uint16_t g = 0; g < ctx->num_groups; g++) {
-        ctx->noise_mu  += sqrtf(0.25f * JDPS_PI * group_power[g]);
-        ctx->noise_var += (1.0f - 0.25f * JDPS_PI) * group_power[g];
+        ctx->noise_mu  += sqrtf(0.25f * JDPS_PI * group_power[g].r);
+        ctx->noise_var += (1.0f - 0.25f * JDPS_PI) * group_power[g].r;
     }
 }
 
@@ -278,26 +278,26 @@ static void add_velocity_spectrum(jdps_ctx_t *ctx)
     const float v_first = -(float)velocity_half_points(&ctx->cfg) * v_step;
 
     for (uint16_t p = 0; p < ctx->num_pairs; p++) {
-        ctx->pair_rot[p]      = cplx_expj(ctx->pair_rate[p] * v_first);
-        ctx->pair_rot_step[p] = cplx_expj(ctx->pair_rate[p] * v_step);
+        ctx->work.vel.pair_rot[p]      = cplx_expj(ctx->pair_rate[p] * v_first);
+        ctx->work.vel.pair_rot_step[p] = cplx_expj(ctx->pair_rate[p] * v_step);
     }
     for (uint16_t iv = 0; iv < ctx->num_v_points; iv++) {
-        memset(ctx->group_acc, 0, ctx->num_groups * sizeof(complex));
+        memset(ctx->work.vel.group_acc, 0, ctx->num_groups * sizeof(complex));
         for (uint16_t p = 0; p < ctx->num_pairs; p++) {
-            complex t = cplx_mul(ctx->pair_prod[p], ctx->pair_rot[p]);
-            ctx->group_acc[ctx->pair_group[p]].r += t.r;
-            ctx->group_acc[ctx->pair_group[p]].i += t.i;
+            complex t = cplx_mul(ctx->work.vel.pair_prod[p], ctx->work.vel.pair_rot[p]);
+            ctx->work.vel.group_acc[ctx->pair_group[p]].r += t.r;
+            ctx->work.vel.group_acc[ctx->pair_group[p]].i += t.i;
         }
         float metric = 0.0f;
         for (uint16_t g = 0; g < ctx->num_groups; g++) {
-            metric += cplx_abs(ctx->group_acc[g]);
+            metric += cplx_abs(ctx->work.vel.group_acc[g]);
         }
-        ctx->v_metric[iv] += metric;
+        ctx->work.vel.v_metric[iv] += metric;
         /* advance every rotator to the next grid point */
         for (uint16_t p = 0; p < ctx->num_pairs; p++) {
-            ctx->pair_rot[p] = cplx_mul(ctx->pair_rot[p], ctx->pair_rot_step[p]);
+            ctx->work.vel.pair_rot[p] = cplx_mul(ctx->work.vel.pair_rot[p], ctx->work.vel.pair_rot_step[p]);
             if ((iv % JDPS_ROT_RENORM_EVERY) == (JDPS_ROT_RENORM_EVERY - 1u)) {
-                ctx->pair_rot[p] = cplx_unit(ctx->pair_rot[p]);
+                ctx->work.vel.pair_rot[p] = cplx_unit(ctx->work.vel.pair_rot[p]);
             }
         }
     }
@@ -334,15 +334,15 @@ jdps_status_t jdps_solve_velocity(jdps_ctx_t *ctx)
     const float    v_step     = ctx->cfg.v_step_mps;
     uint16_t best = 0u;
     for (uint16_t iv = 1u; iv < num_points; iv++) {
-        if (ctx->v_metric[iv] > ctx->v_metric[best]) {
+        if (ctx->work.vel.v_metric[iv] > ctx->work.vel.v_metric[best]) {
             best = iv;
         }
     }
     float v_est = (float)((int16_t)best - velocity_half_points(&ctx->cfg)) * v_step;
     if (best > 0u && best + 1u < num_points) {
-        float m_l = ctx->v_metric[best - 1u];
-        float m_c = ctx->v_metric[best];
-        float m_r = ctx->v_metric[best + 1u];
+        float m_l = ctx->work.vel.v_metric[best - 1u];
+        float m_c = ctx->work.vel.v_metric[best];
+        float m_r = ctx->work.vel.v_metric[best + 1u];
         float den = m_l - 2.0f * m_c + m_r;
         if (den < 0.0f) {
             v_est += 0.5f * (m_l - m_r) / den * v_step;
@@ -351,7 +351,7 @@ jdps_status_t jdps_solve_velocity(jdps_ctx_t *ctx)
     const uint8_t at_edge = (uint8_t)(best == 0u || best + 1u == num_points);
 
     ctx->v_est   = v_est;
-    ctx->v_score = (ctx->v_metric[best] - ctx->noise_mu) / sqrtf(ctx->noise_var);
+    ctx->v_score = (ctx->work.vel.v_metric[best] - ctx->noise_mu) / sqrtf(ctx->noise_var);
     ctx->v_valid = (uint8_t)(ctx->v_score >= ctx->cfg.min_v_score && !at_edge);
     ctx->v_used  = ctx->v_valid ? v_est : 0.0f;
     ctx->stage   = STAGE_PHASE;
@@ -387,7 +387,7 @@ static void sync_segment_phases(const jdps_ctx_t *ctx, uint8_t ant_first, uint8_
     complex x[JDPS_MAX_SEG];
     complex x_next[JDPS_MAX_SEG];
 
-#define GROUP_SUM(a, o, k, j) (ctx->group_sum[(a)][((o) * K + (k)) * K + (j)])
+#define GROUP_SUM(a, o, k, j) (ctx->work.ph.group_sum[(a)][((o) * K + (k)) * K + (j)])
 
     for (uint8_t k = 0; k < K; k++) {
         seg_phasor[k] = (complex){ 1.0f, 0.0f };
@@ -493,7 +493,7 @@ jdps_status_t jdps_add_phase(jdps_ctx_t *ctx, uint8_t ant, const complex *iq)
         (ctx->ant_added & (1u << ant)) != 0u) {
         return JDPS_ERR_PARAM;
     }
-    complex *acc = ctx->group_sum[ant];
+    complex *acc = ctx->work.ph.group_sum[ant];
     memset(acc, 0, ctx->num_groups * sizeof(complex));
     for (uint16_t p = 0; p < ctx->num_pairs; p++) {
         const uint8_t lo = ctx->pair_lo[p];

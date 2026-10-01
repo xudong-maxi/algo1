@@ -70,7 +70,8 @@ extern "C" {
 #define JDPS_MAX_ANT        4u    /**< antenna paths                         */
 #endif
 #ifndef JDPS_MAX_STEPS
-#define JDPS_MAX_STEPS      80u   /**< ranging steps per procedure           */
+#define JDPS_MAX_STEPS      72u   /**< ranging steps per procedure (each channel
+                                       used at most once; BLE CS: <= 72)     */
 #endif
 #ifndef JDPS_MAX_SEG
 #define JDPS_MAX_SEG        8u    /**< segments per procedure                */
@@ -79,11 +80,15 @@ extern "C" {
 #define JDPS_MAX_ORDER      2u    /**< largest channel-index spacing paired  */
 #endif
 #ifndef JDPS_MAX_V_POINTS
-#define JDPS_MAX_V_POINTS   161u  /**< velocity grid points, incl. guard     */
+#define JDPS_MAX_V_POINTS   89u   /**< velocity grid points incl. guard:
+                                       2 * (v_max + v_guard) / v_step + 1
+                                       (default cfg: 2 * 11 / 0.25 + 1 = 89)  */
 #endif
 #define JDPS_MAX_CHANNELS   80u   /**< channel index range 0..MAX_CHANNELS-1 */
 
-#define JDPS_MAX_PAIRS      (JDPS_MAX_STEPS * JDPS_MAX_ORDER)
+/* pairs with index spacing o: at most num_steps - o  ->  sum over o = 1..ORDER */
+#define JDPS_MAX_PAIRS      (JDPS_MAX_STEPS * JDPS_MAX_ORDER - \
+                             JDPS_MAX_ORDER * (JDPS_MAX_ORDER + 1u) / 2u)
 #define JDPS_MAX_GROUPS     (JDPS_MAX_ORDER * JDPS_MAX_SEG * JDPS_MAX_SEG)
 
 /* ------------------------------------------------------------------------- */
@@ -140,8 +145,12 @@ typedef struct {
 } jdps_result_t;
 
 /**
- * Processing context: 11.1 KB with default limits, 7.1 KB with JDPS_MAX_SEG = 4,
- * 6.5 KB with JDPS_MAX_SEG = 3 (the iq itself is never stored). Place it statically.
+ * Processing context (the iq itself is never stored). Place it statically.
+ *   default limits                         : 6.1 KB
+ *   -DJDPS_MAX_SEG=3u                      : 5.1 KB
+ *   -DJDPS_MAX_SEG=3u -DJDPS_MAX_ORDER=1u  : 2.8 KB (cfg.num_orders = 1, slightly
+ *                                            less robust, see design doc 6.4)
+ * Pass-1 and pass-2 working memory share one union.
  * Fields are internal; read results through jdps_result_t.
  */
 typedef struct {
@@ -164,14 +173,22 @@ typedef struct {
     uint8_t       pair_group[JDPS_MAX_PAIRS];     /**< group id                         */
     float         pair_rate[JDPS_MAX_PAIRS];      /**< alpha_p [rad/(m/s)]              */
 
-    /* single-antenna scratch, reused for every antenna */
-    complex       pair_prod[JDPS_MAX_PAIRS];      /**< y_hi * conj(y_lo)                */
-    complex       pair_rot[JDPS_MAX_PAIRS];       /**< exp(j*alpha*v), running          */
-    complex       pair_rot_step[JDPS_MAX_PAIRS];  /**< exp(j*alpha*dv)                  */
-    complex       group_acc[JDPS_MAX_GROUPS];     /**< group sums at one grid point     */
+    /* pass 1 and pass 2 never run at the same time: their memory is shared */
+    union {
+        struct {                                  /* pass 1 (velocity)                  */
+            complex pair_prod[JDPS_MAX_PAIRS];    /**< y_hi * conj(y_lo), one antenna   */
+            complex pair_rot[JDPS_MAX_PAIRS];     /**< exp(j*alpha*v), running          */
+            complex pair_rot_step[JDPS_MAX_PAIRS];/**< exp(j*alpha*dv)                  */
+            complex group_acc[JDPS_MAX_GROUPS];   /**< group sums at one grid point     */
+            float   v_metric[JDPS_MAX_V_POINTS];  /**< velocity spectrum, all antennas  */
+        } vel;
+        struct {                                  /* pass 2 (segment phase)             */
+            complex group_sum[JDPS_MAX_ANT][JDPS_MAX_GROUPS]; /**< per antenna, of the
+                                                       Doppler-compensated pairs        */
+        } ph;
+    } work;
 
-    /* pass 1: accumulated over antennas */
-    float         v_metric[JDPS_MAX_V_POINTS];    /**< velocity spectrum                */
+    /* velocity result */
     float         noise_mu;                       /**< metric mean for pure noise       */
     float         noise_var;                      /**< metric variance for pure noise   */
     float         v_est;
@@ -179,8 +196,7 @@ typedef struct {
     float         v_used;
     uint8_t       v_valid;
 
-    /* pass 2: per antenna group sums of the Doppler-compensated pairs */
-    complex       group_sum[JDPS_MAX_ANT][JDPS_MAX_GROUPS];
+    /* segment phase result (needed by pass 3) */
     complex       seg_phasor[JDPS_MAX_ANT][JDPS_MAX_SEG]; /**< exp(j*psi)               */
 } jdps_ctx_t;
 
