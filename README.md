@@ -14,12 +14,16 @@ python -m cs_agc.run_sim --trials 400 --out results   # 4 核约 3 分钟
 ## 实测 log 回放
 
 ```bash
-python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedure 一张图 + summary.csv
+python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedure 一张图 + CSV
 # 常用参数：--split 25,25,22  --se-gap-ms 40  --per-ant  --combine mul|conj  --n-mode0 1
 ```
 - 解析 `ch_idx_list`（第 1 个为 mode0，跳过）与 4 路 `[iq_data]`（R=0 本地 / R=1 远端，按信道号索引），PBR 取 local×remote。
 - log 打印截断造成的损坏条目会被丢弃（置 0，不参与配对和 IFFT），图标题里的 `missing` 为丢弃数。
 - 每张图：每路天线一行，分别为补偿前相位、补偿后相位（去掉最强径斜率，按 subevent 着色）、IFFT 距离谱对比；右上角为速度谱，标题给出 v 是否可信（score、是否落在边界）。
+- 输出文件：
+  - `summary.csv`：每个 procedure 一行，保存三种处理下的测距值和速度值：raw（不补偿）、legacy（优化前，现有单 subevent 多普勒算法）、jdps（优化后）。字段为 `d_raw / d_legacy / d_jdps`、`v_legacy / v_jdps`，以及 JDPS 的 `v_jdps_est / v_jdps_valid / v_jdps_score` 和各 subevent 相位 `psi`。
+  - `per_antenna.csv`：每个 procedure、每路天线一行，保存三种处理下的测距值。
+  - `trend.png`：多于 1 个 procedure 时生成，画出距离和速度随 procedure 的变化。
 - 远端 IQ 按 log 中 `local iq ts / remote iq ts` 的对应关系配对；某路天线缺本地或远端 IQ 时打印 warn，全部缺失（全 0）时跳过该次测量。
 
 ## C 模块（MCU 移植，协议无关）
