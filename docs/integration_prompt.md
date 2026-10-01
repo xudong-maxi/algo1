@@ -24,8 +24,8 @@
 - IQ：每条天线路径一组，**本地 IQ × 远端 IQ（直接相乘，不取共轭）**，按信道号排列，长度 `ALG_CHANNEL_NUM`；未测量的信道由跳频表判定，值不参与计算。
 - 天线：4 条路径 = 发起端 2 根 × 反射端 2 根（两根天线互相垂直）；path0=(0,0)、path1=(0,1)、path2=(1,0)、path3=(1,1)。
 - AGC 按设备设定，每个 subevent 只设一次 → 所有路径共用一组 subevent 相位（模块只支持这种模式）；速度由 4 条路径统一估计。
-- 平台：MCU 128 MHz，带单精度 FPU。AGC + 运动补偿处理（不含测距）4 条路径合计必须 < 60 ms；估算 `PAIR_ORDER=1` 约 18.6 ms、`PAIR_ORDER=2` 约 36.4 ms（K=3）。
-- 内存：**任何时刻只能有一路 IQ 在内存里**，但同一路 IQ 可以多次读取。必须保留流式调用：每路 `add_speed_path` → `solve_speed` → 每路 `add_phase_path` → `solve_phase` → 每路 `iq_compensation`。`SubeventMotionCtx` 1,124 B（默认），栈 ≤ 368 B。
+- 平台：MCU 128 MHz，带单精度 FPU。AGC + 运动补偿处理（不含测距）4 条路径合计必须 < 60 ms；估算默认 `PAIR_ORDER=2` 约 36.4 ms、`PAIR_ORDER=1` 约 18.6 ms（K=3）。
+- 内存：**任何时刻只能有一路 IQ 在内存里**，但同一路 IQ 可以多次读取。必须保留流式调用：每路 `add_speed_path` → `solve_speed` → 每路 `add_phase_path` → `solve_phase` → 每路 `iq_compensation`。`SubeventMotionCtx` 1,516 B（默认），栈 ≤ 448 B。
 - 复数类型：工程里已有 `complex`，成员**依次**为 `float r`、`float i`；模块用 `{ r, i }` 初始化，依赖这个顺序。
 
 ### 3. 必须保持不变的东西（算法契约）
@@ -40,7 +40,7 @@
 ### 4. 可以按工程规范调整的东西
 - 文件位置、`#include` 列表与顺序、编译宏的默认值放在哪里（模块头文件或工程配置头文件）。
 - 工程实际的错误码值、日志宏、断言宏；如果工程有更合适的错误码（例如区分「无有效信号」），可以替换并告诉我。
-- `SUBEVENT_MOTION_MAX_PATH_NUM`、`SUBEVENT_MOTION_MAX_SUBEVENT_NUM`（subevent 最多 3 个时设为 3，ctx 900 B）、`SUBEVENT_MOTION_PAIR_ORDER`（1 或 2，选 2 前先问我）。
+- `SUBEVENT_MOTION_MAX_PATH_NUM`、`SUBEVENT_MOTION_MAX_SUBEVENT_NUM`（subevent 最多 3 个时设为 3，ctx 1,052 B）；`SUBEVENT_MOTION_PAIR_ORDER` 默认 2，改为 1 前先问我。
 - 数学函数如果工程有 CMSIS-DSP 或自研快速实现，可以替换，但替换后必须仍通过回归测试。
 - 调用侧胶水代码：从工程的 CS 结果里取出 `channel_select_t` 和每条路径的 IQ（本地 × 远端），按流式顺序调用；补偿后的 IQ 交给工程现有的 IFFT 测距流程；速度、分数、subevent 相位按工程习惯输出到日志或结果结构。
 - 只做与集成有关的改动，不要顺手重构工程里其他代码。
@@ -57,7 +57,7 @@
 - 主机回归测试全部通过（`PAIR_ORDER` = 1 和 2 各 15 个用例），容差不放宽：速度差 < 0.01 m/s，subevent 相位差 < 0.01 rad，补偿后 IQ 的相对误差 < 1e-3，返回状态和可信标志完全一致，score 相对误差 < 1e-3。
 - 目标平台编译无新增警告；不使用 malloc；IQ 内存峰值为一路。
 - 4 条路径处理总耗时 < 60 ms（给出实测值或基于实测的估算）。
-- 如果有实测 log，用本仓库的 `python -m cs_agc.log_replay` 和工程实现分别处理同一份数据，速度、subevent 相位和测距结果应一致（注意 log_replay 默认使用间隔 1 和 2 的配对，对比 `PAIR_ORDER=1` 时需要用 `JdpsCfg(orders=(1,))`）。
+- 如果有实测 log，用本仓库的 `python -m cs_agc.log_replay` 和工程实现分别处理同一份数据，速度、subevent 相位和测距结果应一致（log_replay 默认使用间隔 1 和 2 的配对，与默认的 `PAIR_ORDER=2` 一致）。
 
 ### 7. 最后交付给我
 1. 改动文件清单和简要说明；

@@ -90,7 +90,7 @@ static inline float channel_freq(uint8_t ch)
 
 static inline bool channel_measured(SubeventMotionCtx* ctx, uint8_t ch)
 {
-    return ctx->channel_subevent[ch] != SUBEVENT_NOT_MEASURED;
+    return ctx->channel.subevent[ch] != SUBEVENT_NOT_MEASURED;
 }
 
 // 信道对 (ch, ch + order) 是否都被测量
@@ -103,7 +103,7 @@ static inline bool pair_valid(SubeventMotionCtx* ctx, uint8_t ch, uint8_t order)
 static inline uint8_t pair_group(SubeventMotionCtx* ctx, uint8_t ch, uint8_t order)
 {
     uint8_t num = ctx->subevent_num;
-    return (uint8_t)(((order - 1) * num + ctx->channel_subevent[ch]) * num + ctx->channel_subevent[ch + order]);
+    return (uint8_t)(((order - 1) * num + ctx->channel.subevent[ch]) * num + ctx->channel.subevent[ch + order]);
 }
 
 static inline uint8_t group_count(SubeventMotionCtx* ctx)
@@ -121,8 +121,8 @@ static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* c
     float sum_channel = 0.0f;
     uint8_t subevent_count[SUBEVENT_MOTION_MAX_SUBEVENT_NUM] = {0};
 
-    memset_s(ctx->channel_subevent, sizeof(ctx->channel_subevent), SUBEVENT_NOT_MEASURED,
-             sizeof(ctx->channel_subevent));
+    memset_s(ctx->channel.subevent, sizeof(ctx->channel.subevent), SUBEVENT_NOT_MEASURED,
+             sizeof(ctx->channel.subevent));
 
     // 与 motion_effect_analyze 相同的时间约定：subevent 内逐步累加每个信道的测量时长，
     // subevent 之间加上间隔 t_mes；ch_hop_orders[0] 是 mode0，第 step 步的信道是 ch_hop_orders[step + 1]
@@ -135,8 +135,8 @@ static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* c
             // 只记录第一次被选到的信道
             if ((ch < ALG_CHANNEL_NUM) && !channel_measured(ctx, ch)) {
                 float t_sec = (float)current_time_us * 1e-6f;
-                ctx->channel_subevent[ch] = s;
-                ctx->channel_tau[ch] = t_sec;
+                ctx->channel.subevent[ch] = s;
+                ctx->channel.tau[ch] = t_sec;
                 sum_time += t_sec;
                 sum_channel += (float)ch;
                 subevent_count[s]++;
@@ -153,17 +153,18 @@ static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* c
 
     // 时间以平均测量时刻为参考，输出的距离对应该时刻；信道号以平均值为参考，保持 float 精度
     float t_ref = sum_time / (float)channel_count;
-    ctx->channel_ref = sum_channel / (float)channel_count;
-    memset_s(ctx->subevent_mean_tau, sizeof(ctx->subevent_mean_tau), 0, sizeof(ctx->subevent_mean_tau));
+    ctx->channel.mean_channel = sum_channel / (float)channel_count;
+    memset_s(ctx->channel.subevent_mean_tau, sizeof(ctx->channel.subevent_mean_tau), 0,
+             sizeof(ctx->channel.subevent_mean_tau));
     for (uint8_t ch = 0; ch < ALG_CHANNEL_NUM; ++ch) {
         if (channel_measured(ctx, ch)) {
-            ctx->channel_tau[ch] -= t_ref;
-            ctx->subevent_mean_tau[ctx->channel_subevent[ch]] += ctx->channel_tau[ch];
+            ctx->channel.tau[ch] -= t_ref;
+            ctx->channel.subevent_mean_tau[ctx->channel.subevent[ch]] += ctx->channel.tau[ch];
         }
     }
     for (uint8_t s = 0; s < ctx->subevent_num; ++s) {
         if (subevent_count[s] != 0) {
-            ctx->subevent_mean_tau[s] /= (float)subevent_count[s];
+            ctx->channel.subevent_mean_tau[s] /= (float)subevent_count[s];
         }
     }
     return ERRCODE_RANGING_ALG_SUCCESS;
@@ -175,20 +176,20 @@ static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* c
 static float pair_speed_rate(SubeventMotionCtx* ctx, uint8_t ch, uint8_t order)
 {
     uint8_t hi = ch + order;
-    float freq_ref = CHANNEL0_FREQ + ctx->channel_ref * CHANNEL_SPACING;
-    float df_lo = ((float)ch - ctx->channel_ref) * CHANNEL_SPACING;
-    float df_hi = ((float)hi - ctx->channel_ref) * CHANNEL_SPACING;
-    float tau_lo = ctx->channel_tau[ch];
-    float tau_hi = ctx->channel_tau[hi];
-    float local_dt = (tau_hi - ctx->subevent_mean_tau[ctx->channel_subevent[hi]]) -
-                     (tau_lo - ctx->subevent_mean_tau[ctx->channel_subevent[ch]]);
+    float freq_ref = CHANNEL0_FREQ + ctx->channel.mean_channel * CHANNEL_SPACING;
+    float df_lo = ((float)ch - ctx->channel.mean_channel) * CHANNEL_SPACING;
+    float df_hi = ((float)hi - ctx->channel.mean_channel) * CHANNEL_SPACING;
+    float tau_lo = ctx->channel.tau[ch];
+    float tau_hi = ctx->channel.tau[hi];
+    float local_dt = (tau_hi - ctx->channel.subevent_mean_tau[ctx->channel.subevent[hi]]) -
+                     (tau_lo - ctx->channel.subevent_mean_tau[ctx->channel.subevent[ch]]);
     return ROUND_TRIP_FACTOR * (freq_ref * local_dt + df_hi * tau_hi - df_lo * tau_lo);
 }
 
 // 多普勒和距离迁移补偿量 exp(j * 4 * pi / c * f * v * tau)
 static inline complex doppler_rotation(SubeventMotionCtx* ctx, uint8_t ch)
 {
-    return complex_expj(ROUND_TRIP_FACTOR * channel_freq(ch) * ctx->speed * ctx->channel_tau[ch]);
+    return complex_expj(ROUND_TRIP_FACTOR * channel_freq(ch) * ctx->result.speed * ctx->channel.tau[ch]);
 }
 
 errcode_t subevent_motion_init(SubeventMotionCtx* ctx, channel_select_t* channel_select_cfg, uint8_t path_num)
@@ -231,8 +232,8 @@ static void add_noise_statistics(SubeventMotionCtx* ctx, complex* iq)
         }
     }
     for (uint8_t g = 0; g < group_count(ctx); ++g) {
-        ctx->noise_mean += sqrtf(0.25f * (float)PI * group_power[g]);
-        ctx->noise_var += (1.0f - 0.25f * (float)PI) * group_power[g];
+        ctx->work.speed.noise_mean += sqrtf(0.25f * (float)PI * group_power[g]);
+        ctx->work.speed.noise_var += (1.0f - 0.25f * (float)PI) * group_power[g];
     }
 }
 
@@ -249,7 +250,7 @@ errcode_t subevent_motion_add_speed_path(SubeventMotionCtx* ctx, complex* iq)
     // 组内相干累加，组间非相干累加；共轭乘积保留幅度，强信道权重更大
     for (uint8_t step = 0; step < SUBEVENT_MOTION_SPEED_POINT_NUM; ++step) {
         float current_speed = first_speed + (float)step * MOTION_SPEED_RESOLUTION;
-        memset_s(ctx->group_acc, sizeof(ctx->group_acc), 0, sizeof(ctx->group_acc));
+        memset_s(ctx->work.speed.group_acc, sizeof(ctx->work.speed.group_acc), 0, sizeof(ctx->work.speed.group_acc));
         for (uint8_t order = 1; order <= SUBEVENT_MOTION_PAIR_ORDER; ++order) {
             for (uint8_t ch = 0; ch < ALG_CHANNEL_NUM; ++ch) {
                 if (!pair_valid(ctx, ch, order)) {
@@ -257,14 +258,14 @@ errcode_t subevent_motion_add_speed_path(SubeventMotionCtx* ctx, complex* iq)
                 }
                 complex z = complex_mul_conj(iq[ch + order], iq[ch]);
                 complex rotation = complex_expj(pair_speed_rate(ctx, ch, order) * current_speed);
-                complex_acc(&ctx->group_acc[pair_group(ctx, ch, order)], complex_mul(z, rotation));
+                complex_acc(&ctx->work.speed.group_acc[pair_group(ctx, ch, order)], complex_mul(z, rotation));
             }
         }
         float magnitude = 0.0f;
         for (uint8_t g = 0; g < group_count(ctx); ++g) {
-            magnitude += complex_abs(ctx->group_acc[g]);
+            magnitude += complex_abs(ctx->work.speed.group_acc[g]);
         }
-        ctx->work.speed_spectrum[step] += magnitude;
+        ctx->work.speed.spectrum[step] += magnitude;
     }
     ctx->path_count++;
     return ERRCODE_RANGING_ALG_SUCCESS;
@@ -276,11 +277,11 @@ errcode_t subevent_motion_solve_speed(SubeventMotionCtx* ctx)
         return ERRCODE_RANGING_ALG_INVALID_PARAM;
     }
     // 所有路径的 IQ 都为 0（例如远端 IQ 缺失），没有可用信号
-    if (ctx->noise_var <= 0.0f) {
+    if (ctx->work.speed.noise_var <= 0.0f) {
         return ERRCODE_RANGING_ALG_NOT_ENOUGH_IQ;
     }
 
-    float* spectrum = ctx->work.speed_spectrum;
+    float* spectrum = ctx->work.speed.spectrum;
     uint8_t best = 0;
     for (uint8_t step = 1; step < SUBEVENT_MOTION_SPEED_POINT_NUM; ++step) {
         if (spectrum[step] > spectrum[best]) {
@@ -301,10 +302,10 @@ errcode_t subevent_motion_solve_speed(SubeventMotionCtx* ctx)
     }
 
     // 分数低或峰值在搜索边界（速度可能超出范围）时，不补偿多普勒
-    ctx->speed_est = speed_est;
-    ctx->speed_score = (spectrum[best] - ctx->noise_mean) / sqrtf(ctx->noise_var);
-    ctx->speed_valid = (ctx->speed_score >= MOTION_MIN_SPEED_SCORE) && !at_edge;
-    ctx->speed = ctx->speed_valid ? speed_est : 0.0f;
+    ctx->result.speed_est = speed_est;
+    ctx->result.speed_score = (spectrum[best] - ctx->work.speed.noise_mean) / sqrtf(ctx->work.speed.noise_var);
+    ctx->result.speed_valid = (ctx->result.speed_score >= MOTION_MIN_SPEED_SCORE) && !at_edge;
+    ctx->result.speed = ctx->result.speed_valid ? speed_est : 0.0f;
     ctx->stage = STAGE_PHASE;
     return ERRCODE_RANGING_ALG_SUCCESS;
 }
@@ -324,7 +325,7 @@ errcode_t subevent_motion_add_phase_path(SubeventMotionCtx* ctx, uint8_t path, c
     }
 
     // 多普勒补偿后的信道对共轭乘积，按分组累加（不修改 iq）
-    complex* group_sum = ctx->work.group_sum[path];
+    complex* group_sum = ctx->work.phase.group_sum[path];
     for (uint8_t order = 1; order <= SUBEVENT_MOTION_PAIR_ORDER; ++order) {
         for (uint8_t ch = 0; ch < ALG_CHANNEL_NUM; ++ch) {
             if (!pair_valid(ctx, ch, order)) {
@@ -355,7 +356,7 @@ static void estimate_subevent_phase(SubeventMotionCtx* ctx)
     complex x[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
     complex x_next[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
 
-#define GROUP_SUM(p, o, j, k) (ctx->work.group_sum[(p)][((o) * num + (j)) * num + (k)])
+#define GROUP_SUM(p, o, j, k) (ctx->work.phase.group_sum[(p)][((o) * num + (j)) * num + (k)])
 
     for (uint8_t k = 0; k < num; ++k) {
         ctx->subevent_phasor[k].r = 1.0f;
@@ -454,15 +455,11 @@ errcode_t subevent_motion_solve_phase(SubeventMotionCtx* ctx, SubeventMotionResu
     estimate_subevent_phase(ctx);
     ctx->stage = STAGE_DONE;
 
+    for (uint8_t k = 0; k < ctx->subevent_num; ++k) {
+        ctx->result.subevent_phase[k] = atan2f(ctx->subevent_phasor[k].i, ctx->subevent_phasor[k].r);
+    }
     if (res != NULL) {
-        memset_s(res, sizeof(SubeventMotionResult), 0, sizeof(SubeventMotionResult));
-        res->speed = ctx->speed;
-        res->speed_est = ctx->speed_est;
-        res->speed_score = ctx->speed_score;
-        res->speed_valid = ctx->speed_valid;
-        for (uint8_t k = 0; k < ctx->subevent_num; ++k) {
-            res->subevent_phase[k] = atan2f(ctx->subevent_phasor[k].i, ctx->subevent_phasor[k].r);
-        }
+        *res = ctx->result;
     }
     return ERRCODE_RANGING_ALG_SUCCESS;
 }
@@ -481,7 +478,7 @@ errcode_t subevent_motion_iq_compensation(SubeventMotionCtx* ctx, complex* iq)
             continue;
         }
         complex rotation = complex_mul_conj(doppler_rotation(ctx, ch),
-                                            ctx->subevent_phasor[ctx->channel_subevent[ch]]);
+                                            ctx->subevent_phasor[ctx->channel.subevent[ch]]);
         iq[ch] = complex_mul(iq[ch], rotation);
     }
     return ERRCODE_RANGING_ALG_SUCCESS;

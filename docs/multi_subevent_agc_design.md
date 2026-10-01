@@ -219,9 +219,9 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 
 | 配置 | P90 误差 | 与 genie 偏差 P90 | v 误差 P90 | 估计耗时（4 条路径） |
 |---|---|---|---|---|
-| 步长 0.25，间隔 {1}（C 模块默认，`PAIR_ORDER=1`） | 1.20 | 0.02 | 0.09 | 18.6 ms |
+| 步长 0.25，间隔 {1}（`PAIR_ORDER=1`） | 1.20 | 0.02 | 0.09 | 18.6 ms |
 | 步长 0.5，间隔 {1} | 1.19 | 0.02 | 0.09 | 9.7 ms |
-| 步长 0.25，间隔 {1,2}（`PAIR_ORDER=2`） | 1.19 | 0.01 | 0.08 | 36.4 ms |
+| 步长 0.25，间隔 {1,2}（C 模块默认，`PAIR_ORDER=2`） | 1.19 | 0.01 | 0.08 | 36.4 ms |
 | 步长 0.5，间隔 {1,2} | 1.19 | 0.01 | 0.08 | 18.9 ms |
 | 步长 1.0，间隔 {1,2} | 1.20 | 0.01 | 0.09 | 10.1 ms |
 
@@ -253,32 +253,34 @@ C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channe
 * 第 1 遍的速度谱和第 2 遍的分组和放在同一个 union 里共用。
 
 ### 7.2 内存
+上下文 `SubeventMotionCtx` 按算法阶段拆成：信道表 `SubeventChannelTable`（每个信道的测量时刻和所属 subevent）、结果 `SubeventMotionResult`、第 1 遍工作区 `SpeedSearchWork`（速度谱、组累加器、噪声统计）和第 2 遍工作区 `PhaseEstimateWork`（每条路径的分组和）；两个工作区放在同一个 union 里。
+
 | 实现 | 常驻 / 堆 | 栈峰值 | 合计 |
 |---|---|---|---|
 | 原 `motion_correct_alg`（单路、不处理 AGC） | `MotionEffectInput` 堆 636 B + `MotionEffectResult` 92 B | 约 400 B | **约 1.1 KB** |
-| `subevent_motion_alg`，`PAIR_ORDER=1`（默认）、最多 4 个 subevent | `SubeventMotionCtx` 1,124 B | 368 B | **约 1.5 KB** |
-| 同上，最多 3 个 subevent（`-DSUBEVENT_MOTION_MAX_SUBEVENT_NUM=3`） | 900 B | ≤ 368 B | **约 1.3 KB** |
-| `PAIR_ORDER=2`、最多 4 个 subevent | 1,764 B | 448 B | 约 2.2 KB |
+| `subevent_motion_alg`，`PAIR_ORDER=2`（默认）、最多 4 个 subevent | `SubeventMotionCtx` 1,516 B | 448 B | **约 2.0 KB** |
+| 同上，最多 3 个 subevent（`-DSUBEVENT_MOTION_MAX_SUBEVENT_NUM=3`） | 1,052 B | ≤ 448 B | **约 1.5 KB** |
+| `PAIR_ORDER=1`、最多 4 个 subevent | 1,004 B | 368 B | 约 1.4 KB |
 
 （`ALG_CHANNEL_NUM` = 80、最多 4 条路径；栈为 x86 上 `-fstack-usage` 实测值，ARM 上通常更小；不含调用方的单路 IQ 缓冲 80 × 8 = 640 B。）
 
 ### 7.3 复杂度
 周期假设（Cortex‑M4F/M33 float32，含 load/store，偏保守）：sincos 60 cycles、复数乘 8 cycles、复数取模 20 cycles。
 
-| K | `PAIR_ORDER=1`（约 70 对） | `PAIR_ORDER=2`（约 138 对） |
+| K | `PAIR_ORDER=2`（默认，约 138 对） | `PAIR_ORDER=1`（约 70 对） |
 |---|---|---|
-| 1 | 18.1 ms | 35.5 ms |
-| 2 | 18.3 ms | 35.9 ms |
+| 1 | 35.5 ms | 18.1 ms |
+| 2 | 35.9 ms | 18.3 ms |
 | 3 | **18.6 ms** | 36.4 ms |
-| 4 | 19.0 ms | 37.2 ms |
+| 4 | 37.2 ms | 19.0 ms |
 
 * 约 95 % 的耗时在第 1 遍的速度搜索：每条路径、每个速度点、每个信道对做一次 sin/cos 和两次复数乘。原 `ndtft` 每条路径的计算量与此相当（101 个速度点 × 约 78 个点对 × cosf + sinf）。
-* 如果需要进一步压缩，速度步长改为 0.5 m/s（`MOTION_SPEED_RESOLUTION`，同时把 `SUBEVENT_MOTION_SPEED_POINT_NUM` 改为 45），耗时约减半，性能基本不变（§6.4）。
+* 如果需要进一步压缩，速度步长改为 0.5 m/s（默认配置下约 18.9 ms）（`MOTION_SPEED_RESOLUTION`，同时把 `SUBEVENT_MOTION_SPEED_POINT_NUM` 改为 45），耗时约减半，性能基本不变（§6.4）。
 * 以上是估算值，需要在目标芯片上实测确认。
 
 ### 7.4 `PAIR_ORDER` 的选择
-* `PAIR_ORDER=1`（默认）：只用相邻信道，与原实现一致，内存和耗时最小。代价是可信度分数偏低：样例实测 log 的分数为 5.8（门限 5），仿真中 K=3、SNR 0 dB 时大部分正确的速度估计会因分数不足回退到 v=0。
-* `PAIR_ORDER=2`：再加间隔 2 的信道对，分数约提高 1.5 倍（样例 log 为 9.5），估计更稳；内存约 +0.6 KB，耗时约 ×2。
+* `PAIR_ORDER=2`（默认）：同时使用间隔 1、2 的信道对，可信度分数约为只用相邻信道时的 1.5 倍（样例实测 log 为 9.5，门限 5），估计更稳；耗时约 36 ms。
+* `PAIR_ORDER=1`：只用相邻信道，与原 `motion_correct_alg` 一致，内存约 -0.5 KB、耗时约减半；代价是可信度分数偏低（样例 log 为 5.8），仿真中 K=3、SNR 0 dB 时大部分正确的速度估计会因分数不足回退到 v=0。
 * 速度超出 ±10 m/s 的支持范围时（例如 15 m/s），`PAIR_ORDER=2` 在仿真中出现过一次以略高于门限的分数接受了错误速度，`PAIR_ORDER=1` 则正确拒绝。
 
 ---

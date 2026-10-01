@@ -29,8 +29,8 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
 ## C 模块（MCU，按工程 motion_correct_alg 风格）
 
 - `c/subevent_motion_alg.h` / `c/subevent_motion_alg.c`：多 subevent 运动补偿 + AGC 相位对齐。输入为工程的 `channel_select_t` 和按信道号排列的 IQ（`complex iq[ALG_CHANNEL_NUM]`），返回 `errcode_t`；所有天线路径共用 subevent 相位（AGC 按设备设定）。
-- 内存：`SubeventMotionCtx` 1,124 B（默认：最多 4 条路径、4 个 subevent、只用相邻信道）+ 栈 ≤ 368 B；任何时刻只需一路 IQ 在内存中。
-- 编译宏：`SUBEVENT_MOTION_MAX_PATH_NUM`、`SUBEVENT_MOTION_MAX_SUBEVENT_NUM`、`SUBEVENT_MOTION_PAIR_ORDER`（1 或 2，2 更稳，内存约 +0.6 KB、耗时约 ×2）。
+- 内存：`SubeventMotionCtx` 1,516 B（默认：最多 4 条路径、4 个 subevent、间隔 1 和 2 的信道对；最多 3 个 subevent 时 1,052 B）+ 栈 ≤ 448 B；任何时刻只需一路 IQ 在内存中。
+- 编译宏：`SUBEVENT_MOTION_MAX_PATH_NUM`、`SUBEVENT_MOTION_MAX_SUBEVENT_NUM`、`SUBEVENT_MOTION_PAIR_ORDER`（默认 2；设为 1 时只用相邻信道，内存约 -0.5 KB、耗时约减半，但低 SNR 时更容易判为速度不可信）。
 - 调用顺序（每路 IQ 按顺序提供 3 遍）：
   ```c
   subevent_motion_init(&ctx, channel_select_cfg, path_num);
