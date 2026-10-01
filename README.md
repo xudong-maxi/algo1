@@ -28,8 +28,16 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
 
 ## C 模块（MCU 移植，协议无关）
 
-- `c/jdps.h` / `c/jdps.c`：JDPS 的 C 实现（C99、float32、无动态内存，工作区 13.9 KB 由调用方提供）。
+- `c/jdps.h` / `c/jdps.c`：JDPS 的 C 实现（C99、float32、无动态内存）。**流式接口：任何时刻内存里只需放一路天线的 IQ**，跨天线的中间结果保存在 `jdps_ctx_t`（默认 11.1 KB；`-DJDPS_MAX_SEG=4u` 时 7.1 KB）。
 - 复数类型使用工程自带的 `complex`（成员 `r`、`i`），通过 `JDPS_COMPLEX_HEADER` 指定定义它的头文件；`c/test/complex_type.h` 仅供主机测试使用。
 - 不绑定具体协议：BLE CS、星闪等都可以用。频点规划由 `cfg.chan0_freq_hz` / `cfg.chan_spacing_hz` 配置（默认值为 BLE CS 的 2402 MHz + idx × 1 MHz）；「segment」指使用同一套 AGC 设置的一段连续 step，对应 BLE CS 的 subevent。
-- 入口：`jdps_process(&cfg, &meas, &work, &res)`，就地补偿 `meas.iq`，输出估计速度和各 segment 的相位。
+- 调用顺序（每路 IQ 按顺序提供 3 遍；`per_ant_phase = 1` 时第 2、3 遍可合并为 2 遍）：
+  ```c
+  jdps_begin(&ctx, &cfg, &layout);
+  for (a = 0; a < A; a++) jdps_add_velocity(&ctx, iq_a);   /* 第 1 遍 */
+  if (jdps_solve_velocity(&ctx) != JDPS_OK) { /* 无有效信号，跳过 */ }
+  for (a = 0; a < A; a++) jdps_add_phase(&ctx, a, iq_a);   /* 第 2 遍 */
+  jdps_solve_phase(&ctx, &res);
+  for (a = 0; a < A; a++) jdps_apply(&ctx, a, iq_a);       /* 第 3 遍：就地补偿后做该路 IFFT */
+  ```
 - 回归测试（与 Python 参考实现逐点对比，仿真用例 + 实测 log）：`cd c && make test`

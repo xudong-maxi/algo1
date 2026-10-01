@@ -1,6 +1,6 @@
 /**
  * @file    jdps_test.c
- * @brief   Host test: runs jdps_process() on vectors exported by
+ * @brief   Host test: runs the streaming JDPS API on vectors exported by
  *          cs_agc/export_vectors.py and compares with the Python reference.
  *
  * Usage: jdps_test vectors.txt
@@ -12,6 +12,7 @@
  */
 #include <math.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 #include <time.h>
 
@@ -102,10 +103,54 @@ static double wrap_pi(double x)
     return x - 2.0 * M_PI * floor((x + M_PI) / (2.0 * M_PI));
 }
 
+/**
+ * Runs JDPS through the streaming API with ONE single-antenna iq buffer, like
+ * the target: before every call the antenna's iq is (re)loaded into iq_buf from
+ * tc->iq (stands for the hardware / external result memory); the compensated iq
+ * of pass 3 is written back to tc->iq for comparison.
+ * per_ant_phase = 1 uses the merged 2-pass order (add_phase(a) -> apply(a)).
+ */
+static jdps_status_t run_streaming(test_case_t *tc, jdps_ctx_t *ctx, jdps_result_t *res)
+{
+    static complex iq_buf[JDPS_MAX_STEPS];
+    const size_t   iq_bytes = tc->num_steps * sizeof(complex);
+    jdps_layout_t  layout = {
+        .num_ant = tc->num_ant, .num_steps = tc->num_steps, .num_seg = tc->num_seg,
+        .chan_idx = tc->chan, .seg_idx = tc->seg, .step_time_s = tc->time_s,
+    };
+    jdps_status_t st = jdps_begin(ctx, &tc->cfg, &layout);
+    if (st != JDPS_OK) return st;
+
+    for (uint8_t a = 0; a < tc->num_ant; a++) {                     /* pass 1 */
+        memcpy(iq_buf, tc->iq[a], iq_bytes);
+        if ((st = jdps_add_velocity(ctx, iq_buf)) != JDPS_OK) return st;
+    }
+    if ((st = jdps_solve_velocity(ctx)) != JDPS_OK) return st;
+
+    for (uint8_t a = 0; a < tc->num_ant; a++) {                     /* pass 2 (+3) */
+        memcpy(iq_buf, tc->iq[a], iq_bytes);
+        if ((st = jdps_add_phase(ctx, a, iq_buf)) != JDPS_OK) return st;
+        if (tc->cfg.per_ant_phase) {
+            if ((st = jdps_apply(ctx, a, iq_buf)) != JDPS_OK) return st;
+            memcpy(tc->iq[a], iq_buf, iq_bytes);
+        }
+    }
+    if ((st = jdps_solve_phase(ctx, res)) != JDPS_OK) return st;
+
+    if (!tc->cfg.per_ant_phase) {
+        for (uint8_t a = 0; a < tc->num_ant; a++) {                 /* pass 3 */
+            memcpy(iq_buf, tc->iq[a], iq_bytes);
+            if ((st = jdps_apply(ctx, a, iq_buf)) != JDPS_OK) return st;
+            memcpy(tc->iq[a], iq_buf, iq_bytes);
+        }
+    }
+    return JDPS_OK;
+}
+
 int main(int argc, char **argv)
 {
-    static test_case_t    tc;
-    static jdps_work_t work;
+    static test_case_t tc;
+    static jdps_ctx_t  ctx;
     jdps_result_t      res;
     int num_cases = 0, num_fail = 0;
     double total_us = 0.0;
@@ -115,17 +160,14 @@ int main(int argc, char **argv)
         perror("open vectors");
         return 2;
     }
+    printf("sizeof(jdps_ctx_t) = %zu bytes, iq buffer = 1 antenna\n\n", sizeof(jdps_ctx_t));
     printf("%-26s %9s %9s %6s %6s %5s %10s %10s  %s\n", "case", "v_c", "v_py", "score", "valid", "st",
            "psi_err", "iq_relerr", "result");
     int rc;
     while ((rc = read_case(fp, &tc)) == 1) {
-        jdps_meas_t meas = {
-            .num_ant = tc.num_ant, .num_steps = tc.num_steps, .num_seg = tc.num_seg,
-            .chan_idx = tc.chan, .seg_idx = tc.seg, .step_time_s = tc.time_s, .iq = tc.iq,
-        };
         clock_t t0 = clock();
         memset(&res, 0, sizeof(res));
-        jdps_status_t st = jdps_process(&tc.cfg, &meas, &work, &res);
+        jdps_status_t st = run_streaming(&tc, &ctx, &res);
         total_us += 1e6 * (double)(clock() - t0) / CLOCKS_PER_SEC;
 
         double psi_err = 0.0, err2 = 0.0, ref2 = 0.0;

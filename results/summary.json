@@ -1876,7 +1876,7 @@
     "loss10": 0.006592939619886165,
     "v90": 0.07602486521711972
    },
-   "cplx": 5.1811875
+   "cplx": 8.556375
   },
   "step0.5_orders12": {
    "stats": {
@@ -1890,7 +1890,7 @@
     "loss10": 0.006652205247013763,
     "v90": 0.07864823622764457
    },
-   "cplx": 2.7886875
+   "cplx": 5.025375
   },
   "step1.0_orders12": {
    "stats": {
@@ -1904,7 +1904,7 @@
     "loss10": 0.006551359710389528,
     "v90": 0.08522327754701621
    },
-   "cplx": 1.5924375000000002
+   "cplx": 3.259875
   },
   "step0.5_orders1": {
    "stats": {
@@ -1918,7 +1918,7 @@
     "loss10": 0.009729433041879386,
     "v90": 0.08826666162121495
    },
-   "cplx": 1.4525000000000001
+   "cplx": 2.63625
   }
  },
  "complexity": {
@@ -1927,72 +1927,68 @@
    "grid": 89,
    "groups": 2,
    "ops": {
-    "pair products (y_m*conj(y_n))": 4416.0,
-    "pair phase-rate + start/step phasors": 17940.0,
-    "search: phasor recursion": 98256.0,
-    "search: group accumulation": 393024.0,
-    "search: |Z| per group": 14240,
-    "Doppler+migration compensation": 6624,
-    "re-pair + group sums": 8832.0,
+    "pass1: pair products": 4416.0,
+    "pass1: rotator init (2 sincos / pair)": 71760.0,
+    "pass1: rotator recursion": 393024.0,
+    "pass1: group accumulation": 393024.0,
+    "pass1: |Z| per group": 14240,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 384,
-    "AGC de-rotation": 2364
+    "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 546080.0,
-   "ms": 4.26625
+   "cycles": 978224.0,
+   "ms": 7.6423749999999995
   },
   "K=2": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 8,
    "ops": {
-    "pair products (y_m*conj(y_n))": 4416.0,
-    "pair phase-rate + start/step phasors": 17940.0,
-    "search: phasor recursion": 98256.0,
-    "search: group accumulation": 393024.0,
-    "search: |Z| per group": 56960,
-    "Doppler+migration compensation": 6624,
-    "re-pair + group sums": 8832.0,
+    "pass1: pair products": 4416.0,
+    "pass1: rotator init (2 sincos / pair)": 71760.0,
+    "pass1: rotator recursion": 393024.0,
+    "pass1: group accumulation": 393024.0,
+    "pass1: |Z| per group": 56960,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 1536,
-    "AGC de-rotation": 2424
+    "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 590012.0,
-   "ms": 4.60946875
+   "cycles": 1022096.0,
+   "ms": 7.985124999999999
   },
   "K=3": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 18,
    "ops": {
-    "pair products (y_m*conj(y_n))": 4416.0,
-    "pair phase-rate + start/step phasors": 17940.0,
-    "search: phasor recursion": 98256.0,
-    "search: group accumulation": 393024.0,
-    "search: |Z| per group": 128160,
-    "Doppler+migration compensation": 6624,
-    "re-pair + group sums": 8832.0,
+    "pass1: pair products": 4416.0,
+    "pass1: rotator init (2 sincos / pair)": 71760.0,
+    "pass1: rotator recursion": 393024.0,
+    "pass1: group accumulation": 393024.0,
+    "pass1: |Z| per group": 128160,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 3456,
-    "AGC de-rotation": 2484
+    "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 663192.0,
-   "ms": 5.1811875
+   "cycles": 1095216.0,
+   "ms": 8.556375
   },
   "K=5": {
    "pairs": 138.0,
    "grid": 89,
    "groups": 50,
    "ops": {
-    "pair products (y_m*conj(y_n))": 4416.0,
-    "pair phase-rate + start/step phasors": 17940.0,
-    "search: phasor recursion": 98256.0,
-    "search: group accumulation": 393024.0,
-    "search: |Z| per group": 356000,
-    "Doppler+migration compensation": 6624,
-    "re-pair + group sums": 8832.0,
+    "pass1: pair products": 4416.0,
+    "pass1: rotator init (2 sincos / pair)": 71760.0,
+    "pass1: rotator recursion": 393024.0,
+    "pass1: group accumulation": 393024.0,
+    "pass1: |Z| per group": 356000,
+    "pass2: Doppler rot (2 sincos / pair) + pair products": 79488.0,
     "phase sync (K x K power iteration)": 9600,
-    "AGC de-rotation": 2604
+    "pass3: Doppler + AGC de-rotation": 21888
    },
-   "cycles": 897296.0,
-   "ms": 7.0101249999999995
+   "cycles": 1329200.0,
+   "ms": 10.384375
   }
  }
 }

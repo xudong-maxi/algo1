@@ -56,30 +56,29 @@
 
 | config | P90 err [m] | P90 dev vs genie [m] | P90 phase RMS [rad] | P90 v err [m/s] | est. time 4 ant [ms] |
 |---|---|---|---|---|---|
-| step0.25_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 5.18 |
-| step0.5_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 2.79 |
-| step1.0_orders12 | 1.20 | 0.01 | 0.06 | 0.09 | 1.59 |
-| step0.5_orders1 | 1.19 | 0.02 | 0.07 | 0.09 | 1.45 |
+| step0.25_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 8.56 |
+| step0.5_orders12 | 1.19 | 0.01 | 0.06 | 0.08 | 5.03 |
+| step1.0_orders12 | 1.20 | 0.01 | 0.06 | 0.09 | 3.26 |
+| step0.5_orders1 | 1.19 | 0.02 | 0.07 | 0.09 | 2.64 |
 
 ## Estimated MCU load (default config, 4 antennas, 128 MHz)
 
 | K | pairs | v grid | groups | cycles | time [ms] |
 |---|---|---|---|---|---|
-| 1 | 138 | 89 | 2 | 546080 | 4.27 |
-| 2 | 138 | 89 | 8 | 590012 | 4.61 |
-| 3 | 138 | 89 | 18 | 663192 | 5.18 |
-| 5 | 138 | 89 | 50 | 897296 | 7.01 |
+| 1 | 138 | 89 | 2 | 978224 | 7.64 |
+| 2 | 138 | 89 | 8 | 1022096 | 7.99 |
+| 3 | 138 | 89 | 18 | 1095216 | 8.56 |
+| 5 | 138 | 89 | 50 | 1329200 | 10.38 |
 
 Breakdown for K=3:
 
 | stage | cycles |
 |---|---|
-| pair products (y_m*conj(y_n)) | 4416 |
-| pair phase-rate + start/step phasors | 17940 |
-| search: phasor recursion | 98256 |
-| search: group accumulation | 393024 |
-| search: |Z| per group | 128160 |
-| Doppler+migration compensation | 6624 |
-| re-pair + group sums | 8832 |
+| pass1: pair products | 4416 |
+| pass1: rotator init (2 sincos / pair) | 71760 |
+| pass1: rotator recursion | 393024 |
+| pass1: group accumulation | 393024 |
+| pass1: |Z| per group | 128160 |
+| pass2: Doppler rot (2 sincos / pair) + pair products | 79488 |
 | phase sync (K x K power iteration) | 3456 |
-| AGC de-rotation | 2484 |
+| pass3: Doppler + AGC de-rotation | 21888 |

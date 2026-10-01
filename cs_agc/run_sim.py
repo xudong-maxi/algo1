@@ -201,17 +201,17 @@ def complexity(n_se, n_ant=4, jcfg=JdpsCfg(), n_ch=72, f_cpu=128e6, trials=50):
                  for _ in range(trials)])
     G = len(jcfg.v_grid)
     Ng = len(jcfg.orders) * n_se * n_se
+    # streaming C implementation: one antenna in memory, every antenna passed 3 times
     ops = {
-        "pair products (y_m*conj(y_n))": P * n_ant * CYC["cmul"],
-        "pair phase-rate + start/step phasors": P * (2 * CYC["sincos"] + CYC["misc_per_pair"]),
-        "search: phasor recursion": P * G * CYC["cmul"],
-        "search: group accumulation": P * G * n_ant * CYC["cmac"],
-        "search: |Z| per group": G * n_ant * Ng * CYC["cabs"],
-        "Doppler+migration compensation": n_ch * (CYC["sincos"] + n_ant * CYC["cmul"]),
-        "re-pair + group sums": P * n_ant * (CYC["cmul"] + CYC["cmac"]),
+        "pass1: pair products": P * n_ant * CYC["cmul"],
+        "pass1: rotator init (2 sincos / pair)": P * n_ant * (2 * CYC["sincos"] + CYC["misc_per_pair"]),
+        "pass1: rotator recursion": P * G * n_ant * CYC["cmul"],
+        "pass1: group accumulation": P * G * n_ant * CYC["cmac"],
+        "pass1: |Z| per group": G * n_ant * Ng * CYC["cabs"],
+        "pass2: Doppler rot (2 sincos / pair) + pair products": P * n_ant * (2 * CYC["sincos"] + 3 * CYC["cmul"]),
         "phase sync (K x K power iteration)": jcfg.n_refine_iter * (jcfg.n_power_iter * n_se * n_se
                                                                    + Ng * n_ant) * CYC["cmac"],
-        "AGC de-rotation": n_ch * (CYC["cmul"] * n_ant) + n_se * CYC["sincos"],
+        "pass3: Doppler + AGC de-rotation": n_ch * n_ant * (CYC["sincos"] + 2 * CYC["cmul"]),
     }
     total = sum(ops.values())
     return dict(pairs=P, grid=G, groups=Ng, ops=ops, cycles=total, ms=total / f_cpu * 1e3)
