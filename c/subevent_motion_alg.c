@@ -111,32 +111,45 @@ static inline uint8_t group_count(SubeventMotionCtx* ctx)
     return (uint8_t)(SUBEVENT_MOTION_PAIR_ORDER * ctx->subevent_num * ctx->subevent_num);
 }
 
-// 检查 channel_select_t 的步数约定：每个 subevent 的第一步是 mode0，
-// ch_hop_orders 只在第 0 项放一个 mode0，其后依次是所有 mode-2 步的信道，
-// 因此 ch_num = 1 + sum(ch_num_per_subevent[s] - 1)
-static bool channel_select_valid(channel_select_t* channel_select_cfg)
+// ch_hop_orders 的两种排列：
+//   正常传参：每个 subevent 开头都有 mode0，与 time_per_channel 逐步对应，ch_num = sum(ch_num_per_subevent)；
+//   log 格式：只在第 0 项有一个 mode0，其后依次是所有 mode-2 信道，ch_num = 1 + sum(ch_num_per_subevent - 1)。
+// 其他 ch_num 视为参数错误。
+#define HOP_ORDER_PER_STEP      0   // 正常传参
+#define HOP_ORDER_SINGLE_MODE0  1   // log 格式
+#define HOP_ORDER_INVALID       2
+
+static uint8_t hop_order_layout(channel_select_t* channel_select_cfg)
 {
-    uint16_t mode2_num = 0;
+    uint16_t step_num = 0;
     for (uint8_t s = 0; s < channel_select_cfg->subevent_num; ++s) {
         if (channel_select_cfg->ch_num_per_subevent[s] == 0) {
-            return false;
+            return HOP_ORDER_INVALID;
         }
-        mode2_num += (uint16_t)(channel_select_cfg->ch_num_per_subevent[s] - 1);
+        step_num += channel_select_cfg->ch_num_per_subevent[s];
     }
-    return channel_select_cfg->ch_num == mode2_num + 1;
+    if (channel_select_cfg->ch_num == step_num) {
+        return HOP_ORDER_PER_STEP;
+    }
+    if ((channel_select_cfg->ch_num < step_num) &&
+        (channel_select_cfg->ch_num == step_num - channel_select_cfg->subevent_num + 1)) {
+        return HOP_ORDER_SINGLE_MODE0;
+    }
+    return HOP_ORDER_INVALID;
 }
 
 static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* channel_select_cfg)
 {
     uint32_t current_time_us = 0;
-    uint16_t step = 0;          // time_per_channel 的下标，包含每个 subevent 开头的 mode0
-    uint16_t mode2_step = 0;    // mode-2 步的序号，对应 ch_hop_orders[mode2_step + 1]
+    uint16_t step = 0;          // 步序号（含每个 subevent 开头的 mode0），也是 time_per_channel 的下标
+    uint16_t mode2_step = 0;    // mode-2 步的序号
     uint16_t channel_count = 0;
     float sum_time = 0.0f;
     float sum_channel = 0.0f;
     uint8_t subevent_count[SUBEVENT_MOTION_MAX_SUBEVENT_NUM] = {0};
 
-    if (!channel_select_valid(channel_select_cfg)) {
+    uint8_t layout = hop_order_layout(channel_select_cfg);
+    if (layout == HOP_ORDER_INVALID) {
         return ERRCODE_RANGING_ALG_INVALID_PARAM;
     }
     memset_s(ctx->channel.subevent, sizeof(ctx->channel.subevent), SUBEVENT_NOT_MEASURED,
@@ -147,7 +160,8 @@ static errcode_t build_channel_table(SubeventMotionCtx* ctx, channel_select_t* c
     for (uint8_t s = 0; s < ctx->subevent_num; ++s) {
         for (uint8_t i = 0; i < channel_select_cfg->ch_num_per_subevent[s]; ++i) {
             if (i > 0) {
-                uint8_t ch = channel_select_cfg->ch_hop_orders[mode2_step + 1];
+                uint16_t hop_idx = (layout == HOP_ORDER_PER_STEP) ? step : (uint16_t)(mode2_step + 1);
+                uint8_t ch = channel_select_cfg->ch_hop_orders[hop_idx];
                 mode2_step++;
                 // 只记录第一次被选到的信道
                 if ((ch < ALG_CHANNEL_NUM) && !channel_measured(ctx, ch)) {

@@ -87,8 +87,10 @@ static int read_case(FILE* fp, TestCase* tc)
 // 由每个 mode-2 步的时间戳还原工程的时序描述：每个 subevent 开头插入一个 mode0 步，
 // time_per_channel（us，含 mode0）与 subevent 间隔 t_mes（us）
 #define MODE0_STEP_US 483
-static int build_channel_select(const TestCase* tc, channel_select_t* cfg, uint8_t* hop, uint8_t* per_subevent,
-                                uint16_t* time_per_channel)
+// per_step_hop = true：正常传参，ch_hop_orders 与 time_per_channel 逐步对应（每个 subevent 开头为 mode0）；
+// per_step_hop = false：log 打印格式，ch_hop_orders 只有第 0 项为 mode0
+static int build_channel_select(const TestCase* tc, bool per_step_hop, channel_select_t* cfg, uint8_t* hop,
+                                uint8_t* per_subevent, uint16_t* time_per_channel)
 {
     long t_us[MAX_STEP_NUM];
     for (unsigned n = 0; n < tc->step_num; n++) {
@@ -104,15 +106,18 @@ static int build_channel_select(const TestCase* tc, channel_select_t* cfg, uint8
     }
     long t_mes = -1;
     unsigned step = 0;
-    hop[0] = tc->channel[0];                                // mode0 占位，算法不使用
+    unsigned hop_num = 0;
     for (unsigned n = 0; n < tc->step_num; n++) {
         bool first_in_subevent = (n == 0) || (tc->subevent[n] != tc->subevent[n - 1]);
         bool last_in_subevent = (n + 1 == tc->step_num) || (tc->subevent[n + 1] != tc->subevent[n]);
         if (first_in_subevent) {
             time_per_channel[step++] = MODE0_STEP_US;       // subevent 开头的 mode0
             per_subevent[tc->subevent[n]]++;
+            if (per_step_hop || (n == 0)) {
+                hop[hop_num++] = tc->channel[n];            // mode0 的信道，算法不使用
+            }
         }
-        hop[n + 1] = tc->channel[n];
+        hop[hop_num++] = tc->channel[n];
         per_subevent[tc->subevent[n]]++;
         time_per_channel[step++] = (uint16_t)(last_in_subevent ? step_us : t_us[n + 1] - t_us[n]);
         if (last_in_subevent && (n + 1 < tc->step_num)) {
@@ -123,7 +128,7 @@ static int build_channel_select(const TestCase* tc, channel_select_t* cfg, uint8
             t_mes = gap;
         }
     }
-    cfg->ch_num = (uint8_t)(tc->step_num + 1);
+    cfg->ch_num = (uint8_t)hop_num;
     cfg->subevent_num = (uint8_t)tc->subevent_num;
     cfg->t_mes = (uint16_t)(t_mes < 0 ? 0 : t_mes);
     cfg->ch_hop_orders = hop;
@@ -139,11 +144,11 @@ static double wrap_pi(double x)
 }
 
 // 按工程方式运行：每次只把一路 IQ（按信道号排列）放进 iq_buf
-static int run_case(TestCase* tc, SubeventMotionCtx* ctx, SubeventMotionResult* res,
+static int run_case(TestCase* tc, bool per_step_hop, SubeventMotionCtx* ctx, SubeventMotionResult* res,
                     complex out[SUBEVENT_MOTION_MAX_PATH_NUM][ALG_CHANNEL_NUM])
 {
     static complex iq_buf[ALG_CHANNEL_NUM];
-    uint8_t hop[MAX_STEP_NUM + 1];
+    uint8_t hop[MAX_STEP_NUM + SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
     uint8_t per_subevent[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
     uint16_t time_per_channel[MAX_STEP_NUM + SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
     channel_select_t cfg;
@@ -155,7 +160,7 @@ static int run_case(TestCase* tc, SubeventMotionCtx* ctx, SubeventMotionResult* 
             out[p][tc->channel[n]] = tc->iq[p][n];
         }
     }
-    if (build_channel_select(tc, &cfg, hop, per_subevent, time_per_channel) != 0) {
+    if (build_channel_select(tc, per_step_hop, &cfg, hop, per_subevent, time_per_channel) != 0) {
         return -1;
     }
     errcode_t err = subevent_motion_init(ctx, &cfg, (uint8_t)tc->path_num);
@@ -180,17 +185,25 @@ static int run_case(TestCase* tc, SubeventMotionCtx* ctx, SubeventMotionResult* 
     return 0;
 }
 
-// channel_select_t 不满足 ch_num = 1 + sum(ch_num_per_subevent[s] - 1) 时，初始化必须返回参数错误
-static int check_invalid_channel_select(SubeventMotionCtx* ctx)
+// ch_hop_orders 的两种排列都应被接受，其他 ch_num 必须返回参数错误
+static int check_channel_select_layout(SubeventMotionCtx* ctx)
 {
-    uint8_t hop[4] = {10, 11, 12, 13};
-    uint8_t per_subevent[2] = {2, 3};                       // 含 mode0：mode-2 共 1 + 2 = 3 步
+    uint8_t per_subevent[2] = {2, 3};                       // 含 mode0：共 5 步，mode-2 共 3 步
     uint16_t time_per_channel[5] = {483, 715, 483, 715, 715};
-    channel_select_t cfg = {4, 2, 40000, hop, NULL, per_subevent, time_per_channel};
+    uint8_t hop_per_step[5] = {10, 11, 20, 12, 13};          // 每个 subevent 开头为 mode0
+    uint8_t hop_log[4] = {10, 11, 12, 13};                   // log 打印格式：只有第 0 项为 mode0
+    channel_select_t cfg = {5, 2, 40000, hop_per_step, NULL, per_subevent, time_per_channel};
     int ok = (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_SUCCESS);
-    cfg.ch_num = 5;                                          // 错误：把每个 mode0 都算进了 ch_num
+    float tau_per_step = ctx->channel.tau[13] - ctx->channel.tau[11];
+    cfg.ch_num = 4;
+    cfg.ch_hop_orders = hop_log;
+    ok = ok && (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_SUCCESS);
+    ok = ok && (fabsf(ctx->channel.tau[13] - ctx->channel.tau[11] - tau_per_step) < 1e-6f);
+    cfg.ch_num = 3;
     ok = ok && (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_INVALID_PARAM);
-    printf("%-26s %s\n\n", "channel_select_check", ok ? "PASS" : "FAIL");
+    cfg.ch_num = 6;
+    ok = ok && (subevent_motion_init(ctx, &cfg, 1) == ERRCODE_RANGING_ALG_INVALID_PARAM);
+    printf("%-26s %s\n\n", "channel_select_layout", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }
 
@@ -211,49 +224,54 @@ int main(int argc, char** argv)
     printf("PAIR_ORDER %d: sizeof(SubeventMotionCtx) = %zu B (MAX_PATH %d, MAX_SUBEVENT %d), IQ buffer = 1 path\n\n",
            SUBEVENT_MOTION_PAIR_ORDER, sizeof(SubeventMotionCtx), SUBEVENT_MOTION_MAX_PATH_NUM,
            SUBEVENT_MOTION_MAX_SUBEVENT_NUM);
-    printf("%-26s %9s %9s %6s %6s %5s %10s %10s  %s\n", "case", "v_c", "v_py", "score", "valid", "st",
-           "phase_err", "iq_relerr", "result");
-    fail_num += check_invalid_channel_select(&ctx);
+    printf("%-22s %-4s %9s %9s %6s %6s %5s %10s %10s  %s\n", "case", "hop", "v_c", "v_py", "score", "valid",
+           "st", "phase_err", "iq_relerr", "result");
+    fail_num += check_channel_select_layout(&ctx);
     int rc;
     while ((rc = read_case(fp, &tc)) == 1) {
         if (tc.orders != SUBEVENT_MOTION_PAIR_ORDER || tc.per_path != 0) {
             continue;                                       // 用例的配对阶数与本次编译不一致
         }
-        memset(&res, 0, sizeof(res));
-        clock_t t0 = clock();
-        int status = run_case(&tc, &ctx, &res, out);
-        total_us += 1e6 * (double)(clock() - t0) / CLOCKS_PER_SEC;
+        // 两种 ch_hop_orders 排列各跑一次：正常传参（每个 subevent 开头有 mode0）和 log 打印格式
+        for (int layout = 0; layout < 2; layout++) {
+            bool per_step_hop = (layout == 0);
+            memset(&res, 0, sizeof(res));
+            clock_t t0 = clock();
+            int status = run_case(&tc, per_step_hop, &ctx, &res, out);
+            total_us += 1e6 * (double)(clock() - t0) / CLOCKS_PER_SEC;
 
-        double phase_err = 0.0, err2 = 0.0, ref2 = 0.0;
-        for (unsigned k = 0; k < tc.subevent_num; k++) {
-            double e = fabs(wrap_pi(res.subevent_phase[k] - tc.exp_phase[0][k]));
-            phase_err = e > phase_err ? e : phase_err;
-        }
-        for (unsigned p = 0; p < tc.path_num; p++) {
-            for (unsigned n = 0; n < tc.step_num; n++) {
-                complex c = out[p][tc.channel[n]];
-                double dr = c.r - tc.exp_iq[p][n][0];
-                double di = c.i - tc.exp_iq[p][n][1];
-                err2 += dr * dr + di * di;
-                ref2 += tc.exp_iq[p][n][0] * tc.exp_iq[p][n][0] + tc.exp_iq[p][n][1] * tc.exp_iq[p][n][1];
+            double phase_err = 0.0, err2 = 0.0, ref2 = 0.0;
+            for (unsigned k = 0; k < tc.subevent_num; k++) {
+                double e = fabs(wrap_pi(res.subevent_phase[k] - tc.exp_phase[0][k]));
+                phase_err = e > phase_err ? e : phase_err;
             }
+            for (unsigned p = 0; p < tc.path_num; p++) {
+                for (unsigned n = 0; n < tc.step_num; n++) {
+                    complex c = out[p][tc.channel[n]];
+                    double dr = c.r - tc.exp_iq[p][n][0];
+                    double di = c.i - tc.exp_iq[p][n][1];
+                    err2 += dr * dr + di * di;
+                    ref2 += tc.exp_iq[p][n][0] * tc.exp_iq[p][n][0] + tc.exp_iq[p][n][1] * tc.exp_iq[p][n][1];
+                }
+            }
+            double iq_rel = sqrt(err2 / (ref2 > 0 ? ref2 : 1.0));
+            double score_tol = 1e-3 * (fabs(tc.exp_score) > 1.0 ? fabs(tc.exp_score) : 1.0);
+            int ok = (status == tc.exp_status) && (res.speed_valid == tc.exp_valid) &&
+                     (fabs(res.speed_score - tc.exp_score) < score_tol) &&
+                     (fabs(res.speed - tc.exp_speed) < TOL_SPEED) && (phase_err < TOL_PHASE) && (iq_rel < TOL_IQ_REL);
+            printf("%-22s %-4s %+9.4f %+9.4f %6.1f %6d %5d %10.2e %10.2e  %s\n", tc.name, per_step_hop ? "step" : "log",
+                   res.speed, tc.exp_speed, res.speed_score, res.speed_valid, status, phase_err, iq_rel,
+                   ok ? "PASS" : "FAIL");
+            case_num++;
+            fail_num += !ok;
         }
-        double iq_rel = sqrt(err2 / (ref2 > 0 ? ref2 : 1.0));
-        double score_tol = 1e-3 * (fabs(tc.exp_score) > 1.0 ? fabs(tc.exp_score) : 1.0);
-        int ok = (status == tc.exp_status) && (res.speed_valid == tc.exp_valid) &&
-                 (fabs(res.speed_score - tc.exp_score) < score_tol) && (fabs(res.speed - tc.exp_speed) < TOL_SPEED) &&
-                 (phase_err < TOL_PHASE) && (iq_rel < TOL_IQ_REL);
-        printf("%-26s %+9.4f %+9.4f %6.1f %6d %5d %10.2e %10.2e  %s\n", tc.name, res.speed, tc.exp_speed,
-               res.speed_score, res.speed_valid, status, phase_err, iq_rel, ok ? "PASS" : "FAIL");
-        case_num++;
-        fail_num += !ok;
     }
     fclose(fp);
     if (rc < 0) {
         printf("vector file parse error after %d cases\n", case_num);
         return 2;
     }
-    printf("\n%d cases, %d failed; mean host time %.1f us/case (x86, not MCU)\n", case_num, fail_num,
+    printf("\n%d runs (cases x 2 hop layouts), %d failed; mean host time %.1f us/case (x86, not MCU)\n", case_num, fail_num,
            case_num ? total_us / case_num : 0.0);
     return fail_num ? 1 : 0;
 }

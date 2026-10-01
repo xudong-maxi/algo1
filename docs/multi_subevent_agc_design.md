@@ -239,10 +239,10 @@ JDPS 与 genie 几乎重合：补偿引入的距离偏差 P90 只有毫米级。
 C 模块按工程现有的 `motion_correct_alg` 风格编写：输入为 `channel_select_t`（跳频表、每个 subevent 的信道数、每个信道的测量时长、subevent 间隔），IQ 按信道号排列（`complex iq[ALG_CHANNEL_NUM]`，未测量的信道不参与计算），返回 `errcode_t`。`channel_select_t` 的约定（已与需求方确认，以 72 个 mode‑2 频点、3 个 subevent 为例）：
 * 每个 subevent 的第一步是 mode0，`ch_num_per_subevent` 包含它，例如 26, 26, 23；
 * `time_per_channel` 按时间顺序给出每一步的时长（µs），包含每个 subevent 的 mode0，共 75 项；
-* `ch_hop_orders` 只在第 0 项放一个 mode0，其后依次是 72 个 mode‑2 信道，`ch_num` = 73；
+* `ch_hop_orders` 与 `time_per_channel` 逐步对应（每个 subevent 开头为 mode0），`ch_num` = 75；也兼容 log 打印格式（只在第 0 项有一个 mode0，其后为 72 个 mode‑2 信道，`ch_num` = 73）；
 * `t_mes` 为上一个 subevent 结束到下一个 subevent（从它的 mode0 开始）开始的间隔（µs）。
 
-模块会检查 `ch_num = 1 + Σ(ch_num_per_subevent[s] − 1)`，不满足时 `subevent_motion_init` 返回参数错误。
+`ch_num` 等于总步数时按逐步对应处理；小于总步数且等于 `1 + Σ(ch_num_per_subevent[s] − 1)` 时按 log 格式处理；其他情况 `subevent_motion_init` 返回参数错误。
 
 任何时刻内存里只需放一路 IQ，每路 IQ 按顺序提供 3 遍：
 

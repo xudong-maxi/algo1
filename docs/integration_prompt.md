@@ -20,7 +20,7 @@
 
 ### 2. 已确认的系统条件（按这些条件适配，不要再去猜）
 - 协议：BLE Channel Sounding，Mode‑2 PBR，随机跳频，72 个信道（ch 2–22、26–76，f = 2402 + ch MHz；模块里由 `CHANNEL0_FREQ`、`CHANNEL_SPACING` 定义）。
-- `channel_select_t`：每个 subevent 的第一步是 mode0，`ch_num_per_subevent` 包含它（例如 26, 26, 23）；`time_per_channel` 按时间顺序给出每一步的时长（us），包含每个 subevent 的 mode0（共 75 项，典型值 mode0 483、mode‑2 715/823）；`ch_hop_orders` 只在第 0 项放一个 mode0，其后依次是 72 个 mode‑2 信道（`ch_num` = 73）；`t_mes` 为上一个 subevent 结束到下一个 subevent 开始的间隔（us，典型 40 ms 左右）。模块会检查 `ch_num = 1 + Σ(ch_num_per_subevent[s] − 1)`。注意：原 `motion_correct_alg` 在这个约定下时间戳会错位（见设计文档 §10.5），不要照搬它的时间计算。
+- `channel_select_t`：每个 subevent 的第一步是 mode0，`ch_num_per_subevent` 包含它（例如 26, 26, 23）；`time_per_channel` 按时间顺序给出每一步的时长（us），包含每个 subevent 的 mode0（共 75 项，典型值 mode0 483、mode‑2 715/823）；`ch_hop_orders` 与 `time_per_channel` 逐步对应，每个 subevent 开头为 mode0（`ch_num` = 75；模块也兼容 log 打印格式：只有第 0 项为 mode0，`ch_num` = 73）；`t_mes` 为上一个 subevent 结束到下一个 subevent 开始的间隔（us，典型 40 ms 左右）。其他 `ch_num` 会返回参数错误。注意：原 `motion_correct_alg` 在这个约定下时间戳会错位（见设计文档 §10.5），不要照搬它的时间计算。
 - IQ：每条天线路径一组，**本地 IQ × 远端 IQ（直接相乘，不取共轭）**，按信道号排列，长度 `ALG_CHANNEL_NUM`；未测量的信道由跳频表判定，值不参与计算。
 - 天线：4 条路径 = 发起端 2 根 × 反射端 2 根（两根天线互相垂直）；path0=(0,0)、path1=(0,1)、path2=(1,0)、path3=(1,1)。
 - AGC 按设备设定，每个 subevent 只设一次 → 所有路径共用一组 subevent 相位（模块只支持这种模式）；速度由 4 条路径统一估计。
