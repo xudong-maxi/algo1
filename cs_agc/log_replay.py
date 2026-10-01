@@ -11,11 +11,9 @@ Usage:
 
 Outputs (in --out):
     <log>_proc<ts>.png   phase before / after, IFFT profiles, velocity spectrum
-    summary.csv          one row per procedure: distance + velocity for
-                           raw    : no compensation
-                           legacy : current single-subevent Doppler method (before optimisation)
-                           jdps   : JDPS (after optimisation)
-    per_antenna.csv      distance per antenna path for the same three methods
+    summary.csv          one row per procedure: distance before (no compensation) and
+                         after JDPS, velocity estimated by JDPS
+    per_antenna.csv      distance per antenna path, before / after
     trend.png            distance / velocity vs procedure (when > 1 procedure)
 """
 import argparse
@@ -29,7 +27,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .algorithms import JdpsCfg, jdps, legacy
+from .algorithms import JdpsCfg, jdps
 from .ranging import delay_profile, estimate_distance, to_grid
 from .sim_model import C, CS_CHANNELS, DF, F0
 
@@ -119,7 +117,7 @@ def build_measurement(proc, split, n_mode0, tcfg, combine="mul"):
 SE_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
 
-def plot_proc(ms, y_c, y_leg, info, d, title, path):
+def plot_proc(ms, y_c, info, d, title, path):
     A, K = ms.y.shape[0], ms.se.max() + 1
     order = np.argsort(ms.f)
     # remove the strongest-path slope (from the compensated profile) so jumps are visible
@@ -145,8 +143,7 @@ def plot_proc(ms, y_c, y_leg, info, d, title, path):
             if a == 0 and col == 0:
                 axx.legend(fontsize=7, ncol=K, loc="lower right")
         axx = ax[a, 2]
-        for yy, lab, c in [(ms.y[a:a + 1], "raw", "#999999"), (y_leg[a:a + 1], "legacy", "#ff7f0e"),
-                           (y_c[a:a + 1], "after JDPS", "#1f77b4")]:
+        for yy, lab, c in [(ms.y[a:a + 1], "before", "#999999"), (y_c[a:a + 1], "after JDPS", "#1f77b4")]:
             dd, pp = delay_profile(to_grid(yy, ms.ch))
             axx.plot(dd, 10 * np.log10(pp / pp.max() + 1e-12), color=c, label=lab)
         axx.set_xlim(0, 40), axx.set_ylim(-30, 1), axx.grid(alpha=0.3)
@@ -168,7 +165,7 @@ def plot_proc(ms, y_c, y_leg, info, d, title, path):
     v_state = "valid" if info["v_valid"] else ("EDGE -> v=0" if info["v_at_edge"] else "LOW SCORE -> v=0")
     fig.suptitle(f"{title}   v_used={info['v_used']:+.2f} m/s ({v_state}, score={info['v_score']:.1f})   "
                  f"ψ=[{', '.join(f'{p:+.2f}' for p in np.ravel(psi))}] rad   "
-                 f"d raw/legacy/JDPS = {d['raw']:.2f}/{d['legacy']:.2f}/{d['jdps']:.2f} m   "
+                 f"d(before)={d['before']:.2f} m  d(after)={d['after']:.2f} m   "
                  f"missing={len(ms.missing)}",
                  fontsize=10)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
@@ -213,17 +210,14 @@ def main():
             if info["status"] == "no_signal":
                 print(f"skip: proc {proc['ts']}: no usable IQ (all zero after local x remote)")
                 continue
-            y_leg, _, v_leg = legacy(ms, jcfg.v_grid)            # before optimisation
-            outs = {"raw": ms.y, "legacy": y_leg, "jdps": y_c}
+            outs = {"before": ms.y, "after": y_c}                 # before = no compensation
             d = {k: float(estimate_distance(y, ms.ch)) for k, y in outs.items()}
             name = f"{stem}_proc{proc['ts']}"
-            plot_proc(ms, y_c, y_leg, info, d, name, os.path.join(a.out, name + ".png"))
+            plot_proc(ms, y_c, info, d, name, os.path.join(a.out, name + ".png"))
             rows.append(dict(log=stem, proc=proc["ts"],
-                             d_raw=round(d["raw"], 3), d_legacy=round(d["legacy"], 3),
-                             d_jdps=round(d["jdps"], 3),
-                             v_legacy=round(float(v_leg), 3), v_jdps=round(float(info["v_used"]), 3),
-                             v_jdps_est=round(float(info["v_hat"]), 3), v_jdps_valid=int(info["v_valid"]),
-                             v_jdps_score=round(info["v_score"], 2),
+                             d_before=round(d["before"], 3), d_after=round(d["after"], 3),
+                             v=round(float(info["v_used"]), 3), v_est=round(float(info["v_hat"]), 3),
+                             v_valid=int(info["v_valid"]), v_score=round(info["v_score"], 2),
                              psi=" ".join(f"{p:.3f}" for p in np.ravel(info["psi"])),
                              missing=len(ms.missing), no_iq_paths=len(ms.no_iq)))
             for ai, ant in enumerate(ms.ants):
@@ -247,18 +241,17 @@ def write_csv(path, rows):
 
 
 def plot_trend(rows, path):
-    """Distance and velocity of every procedure: raw / legacy (before) / JDPS (after)."""
+    """Distance before / after JDPS and the JDPS velocity of every procedure."""
     x = np.arange(len(rows))
     fig, ax = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
-    for key, lab, c in [("d_raw", "raw", "#999999"), ("d_legacy", "legacy (before)", "#ff7f0e"),
-                        ("d_jdps", "JDPS (after)", "#1f77b4")]:
+    for key, lab, c in [("d_before", "before (no compensation)", "#999999"),
+                        ("d_after", "after JDPS", "#1f77b4")]:
         ax[0].plot(x, [r[key] for r in rows], "o-", ms=3, lw=1, color=c, label=lab)
     ax[0].set_ylabel("distance [m] (uncalibrated)")
     ax[0].legend(fontsize=8), ax[0].grid(alpha=0.3)
-    ax[1].plot(x, [r["v_legacy"] for r in rows], "o-", ms=3, lw=1, color="#ff7f0e", label="legacy (before)")
-    ax[1].plot(x, [r["v_jdps"] for r in rows], "o-", ms=3, lw=1, color="#1f77b4", label="JDPS applied")
-    bad = [i for i, r in enumerate(rows) if not r["v_jdps_valid"]]
-    ax[1].plot(bad, [rows[i]["v_jdps_est"] for i in bad], "x", color="#d62728",
+    ax[1].plot(x, [r["v"] for r in rows], "o-", ms=3, lw=1, color="#1f77b4", label="JDPS applied")
+    bad = [i for i, r in enumerate(rows) if not r["v_valid"]]
+    ax[1].plot(bad, [rows[i]["v_est"] for i in bad], "x", color="#d62728",
                label="JDPS rejected estimate (v=0 applied)")
     ax[1].set_ylabel("velocity [m/s]"), ax[1].set_xlabel("procedure index")
     ax[1].legend(fontsize=8), ax[1].grid(alpha=0.3)

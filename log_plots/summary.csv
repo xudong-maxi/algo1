@@ -1,2 +1,2 @@
-log,proc,d_raw,d_legacy,d_jdps,v_legacy,v_jdps,v_jdps_est,v_jdps_valid,v_jdps_score,psi,missing,no_iq_paths
-sample_log,7121,1.472,1.47,1.387,-0.002,0.221,0.221,1,9.46,0.000 2.111 -3.078,2,0
+log,proc,d_before,d_after,v,v_est,v_valid,v_score,psi,missing,no_iq_paths
+sample_log,7121,1.472,1.387,0.221,0.221,1,9.46,0.000 2.111 -3.078,2,0

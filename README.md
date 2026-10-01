@@ -21,8 +21,8 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
 - log 打印截断造成的损坏条目会被丢弃（置 0，不参与配对和 IFFT），图标题里的 `missing` 为丢弃数。
 - 每张图：每路天线一行，分别为补偿前相位、补偿后相位（去掉最强径斜率，按 subevent 着色）、IFFT 距离谱对比；右上角为速度谱，标题给出 v 是否可信（score、是否落在边界）。
 - 输出文件：
-  - `summary.csv`：每个 procedure 一行，保存三种处理下的测距值和速度值：raw（不补偿）、legacy（优化前，现有单 subevent 多普勒算法）、jdps（优化后）。字段为 `d_raw / d_legacy / d_jdps`、`v_legacy / v_jdps`，以及 JDPS 的 `v_jdps_est / v_jdps_valid / v_jdps_score` 和各 subevent 相位 `psi`。
-  - `per_antenna.csv`：每个 procedure、每路天线一行，保存三种处理下的测距值。
+  - `summary.csv`：每个 procedure 一行。`d_before`（优化前，不做任何补偿）、`d_after`（JDPS 补偿后）；`v`（JDPS 实际用于补偿的速度）、`v_est / v_valid / v_score`（速度原始估计、是否可信、可信度分数）；`psi`（各 subevent 被去掉的相位）。
+  - `per_antenna.csv`：每个 procedure、每路天线一行，保存优化前后的测距值。
   - `trend.png`：多于 1 个 procedure 时生成，画出距离和速度随 procedure 的变化。
 - 远端 IQ 按 log 中 `local iq ts / remote iq ts` 的对应关系配对；某路天线缺本地或远端 IQ 时打印 warn，全部缺失（全 0）时跳过该次测量。
 
