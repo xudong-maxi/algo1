@@ -372,111 +372,143 @@ errcode_t subevent_motion_add_phase_path(SubeventMotionCtx* ctx, uint8_t path, c
     return ERRCODE_RANGING_ALG_SUCCESS;
 }
 
-// 分组和模型：group_sum[p][o][j][k] ~ |.| * exp(j * (c[p][o] + psi_k - psi_j))
-//   c[p][o] : 路径 p、信道间隔 o 的截距（局部群时延）
-//   psi_k : subevent k 的相位，psi_0 = 0
-// 每一轮：
-//   Q[j][k] = sum_{p,o} group_sum[p][o][j][k] * exp(-j * c[p][o])  ~ exp(j * (psi_k - psi_j))
-//   H = Q + Q^H，对角线取各行 |H| 之和的最大值（K = 2 时不加这个移位，幂迭代会振荡）
-//   x = H 的主特征向量（幂迭代）                                 ~ exp(-j * psi)
-//   c[p][o] = arg(sum_{j,k} group_sum[p][o][j][k] * exp(-j * (psi_k - psi_j)))
-static void estimate_subevent_phase(SubeventMotionCtx* ctx)
+// ------------------------------------------------------------------------------------------------
+// subevent 相位估计
+//
+// 分组和模型：group_sum(p, o, j, k) ~ |.| * exp(j * (c[p][o] + psi_k - psi_j))
+//   p, o    : 路径、信道间隔序号（o = 0 对应间隔 1）
+//   j, k    : 信道对中低频信道、高频信道所在的 subevent
+//   c[p][o] : 截距（局部群时延），psi_k : subevent k 的相位，psi_0 = 0
+// 交替估计 PHASE_REFINE_NUM 轮，每一轮：
+//   1. H = Q + Q^H，Q[j][k] = sum_{p,o} group_sum(p, o, j, k) * exp(-j * c[p][o])，对角线移位；
+//   2. 幂迭代求 H 的主特征向量 x ~ exp(-j * psi)，得到 psi；
+//   3. 用新的 psi 更新截距 c[p][o]。
+// ------------------------------------------------------------------------------------------------
+typedef complex PhaseMatrix[SUBEVENT_MOTION_MAX_SUBEVENT_NUM][SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
+typedef complex InterceptTable[SUBEVENT_MOTION_MAX_PATH_NUM][SUBEVENT_MOTION_PAIR_ORDER];
+
+// 路径 path、信道间隔序号 order_idx、低频信道在 subevent lo、高频信道在 subevent hi 的分组和
+static inline complex group_sum_at(SubeventMotionCtx* ctx, uint8_t path, uint8_t order_idx, uint8_t lo, uint8_t hi)
 {
     uint8_t num = ctx->subevent_num;
-    complex intercept_conj[SUBEVENT_MOTION_MAX_PATH_NUM][SUBEVENT_MOTION_PAIR_ORDER];
-    complex h[SUBEVENT_MOTION_MAX_SUBEVENT_NUM][SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
-    complex x[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
-    complex x_next[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
+    return ctx->work.phase.group_sum[path][(order_idx * num + lo) * num + hi];
+}
 
-#define GROUP_SUM(p, o, j, k) (ctx->work.phase.group_sum[(p)][((o) * num + (j)) * num + (k)])
-
-    for (uint8_t k = 0; k < num; ++k) {
-        ctx->subevent_phasor[k].r = 1.0f;
-        ctx->subevent_phasor[k].i = 0.0f;
-    }
-    // 截距初值只用 subevent 内部的信道对，与 subevent 相位无关
+// 截距初值：只用 subevent 内部的信道对 (j == k)，与 subevent 相位无关
+static void init_intercept(SubeventMotionCtx* ctx, InterceptTable intercept_conj)
+{
     for (uint8_t p = 0; p < ctx->path_num; ++p) {
         for (uint8_t o = 0; o < SUBEVENT_MOTION_PAIR_ORDER; ++o) {
             complex diag = {0.0f, 0.0f};
-            for (uint8_t k = 0; k < num; ++k) {
-                complex_acc(&diag, GROUP_SUM(p, o, k, k));
+            for (uint8_t k = 0; k < ctx->subevent_num; ++k) {
+                complex_acc(&diag, group_sum_at(ctx, p, o, k, k));
             }
             intercept_conj[p][o] = complex_conj(complex_unit(diag));
         }
     }
-    if (num == 1) {
+}
+
+// H = Q + Q^H，对角线取各行 |H| 之和的最大值（K = 2 时不加这个移位，幂迭代会振荡）
+static void build_phase_matrix(SubeventMotionCtx* ctx, InterceptTable intercept_conj, PhaseMatrix h)
+{
+    uint8_t num = ctx->subevent_num;
+    for (uint8_t j = 0; j < num; ++j) {
+        for (uint8_t k = 0; k < num; ++k) {
+            complex q = {0.0f, 0.0f};
+            for (uint8_t p = 0; p < ctx->path_num; ++p) {
+                for (uint8_t o = 0; o < SUBEVENT_MOTION_PAIR_ORDER; ++o) {
+                    complex_acc(&q, complex_mul(group_sum_at(ctx, p, o, j, k), intercept_conj[p][o]));
+                }
+            }
+            h[j][k] = q;
+        }
+    }
+    for (uint8_t j = 0; j < num; ++j) {
+        h[j][j].r = 2.0f * h[j][j].r;
+        h[j][j].i = 0.0f;
+        for (uint8_t k = j + 1; k < num; ++k) {
+            complex sum = { h[j][k].r + h[k][j].r, h[j][k].i - h[k][j].i };
+            h[j][k] = sum;
+            h[k][j] = complex_conj(sum);
+        }
+    }
+    float diag_shift = 0.0f;
+    for (uint8_t j = 0; j < num; ++j) {
+        float row_sum = 0.0f;
+        for (uint8_t k = 0; k < num; ++k) {
+            row_sum += complex_abs(h[j][k]);
+        }
+        diag_shift = (row_sum > diag_shift) ? row_sum : diag_shift;
+    }
+    for (uint8_t j = 0; j < num; ++j) {
+        h[j][j].r = diag_shift;
+        h[j][j].i = 0.0f;
+    }
+}
+
+// 幂迭代求 H 的主特征向量 x ~ exp(-j * psi)，从当前估计开始；结果写回 subevent_phasor，并使 psi_0 = 0
+static void power_iteration(SubeventMotionCtx* ctx, PhaseMatrix h)
+{
+    uint8_t num = ctx->subevent_num;
+    complex x[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
+    complex x_next[SUBEVENT_MOTION_MAX_SUBEVENT_NUM];
+
+    for (uint8_t k = 0; k < num; ++k) {
+        x[k] = complex_conj(ctx->subevent_phasor[k]);
+    }
+    for (uint8_t iter = 0; iter < PHASE_POWER_ITER_NUM; ++iter) {
+        for (uint8_t j = 0; j < num; ++j) {
+            complex sum = {0.0f, 0.0f};
+            for (uint8_t k = 0; k < num; ++k) {
+                complex_acc(&sum, complex_mul(h[j][k], x[k]));
+            }
+            x_next[j] = complex_unit(sum);
+        }
+        memcpy_s(x, sizeof(x), x_next, sizeof(x_next));
+    }
+    // exp(j * psi_k) = conj(x_k) * x_0
+    for (uint8_t k = 0; k < num; ++k) {
+        ctx->subevent_phasor[k] = complex_mul(complex_conj(x[k]), x[0]);
+    }
+}
+
+// 用当前 subevent 相位和所有分组更新截距：c[p][o] = arg(sum_{j,k} group_sum(p, o, j, k) * exp(-j * (psi_k - psi_j)))
+static void update_intercept(SubeventMotionCtx* ctx, InterceptTable intercept_conj)
+{
+    uint8_t num = ctx->subevent_num;
+    for (uint8_t p = 0; p < ctx->path_num; ++p) {
+        for (uint8_t o = 0; o < SUBEVENT_MOTION_PAIR_ORDER; ++o) {
+            complex sum = {0.0f, 0.0f};
+            for (uint8_t j = 0; j < num; ++j) {
+                for (uint8_t k = 0; k < num; ++k) {
+                    // exp(-j * (psi_k - psi_j)) = exp(j * psi_j) * conj(exp(j * psi_k))
+                    complex rotation = complex_mul_conj(ctx->subevent_phasor[j], ctx->subevent_phasor[k]);
+                    complex_acc(&sum, complex_mul(group_sum_at(ctx, p, o, j, k), rotation));
+                }
+            }
+            intercept_conj[p][o] = complex_conj(complex_unit(sum));
+        }
+    }
+}
+
+static void estimate_subevent_phase(SubeventMotionCtx* ctx)
+{
+    InterceptTable intercept_conj;      // exp(-j * c[p][o])
+    PhaseMatrix h;
+
+    for (uint8_t k = 0; k < ctx->subevent_num; ++k) {
+        ctx->subevent_phasor[k].r = 1.0f;
+        ctx->subevent_phasor[k].i = 0.0f;
+    }
+    if (ctx->subevent_num == 1) {
         return;
     }
-
+    init_intercept(ctx, intercept_conj);
     for (uint8_t round = 0; round < PHASE_REFINE_NUM; ++round) {
-        // Q（存放在 h 中）
-        for (uint8_t j = 0; j < num; ++j) {
-            for (uint8_t k = 0; k < num; ++k) {
-                complex q = {0.0f, 0.0f};
-                for (uint8_t p = 0; p < ctx->path_num; ++p) {
-                    for (uint8_t o = 0; o < SUBEVENT_MOTION_PAIR_ORDER; ++o) {
-                        complex_acc(&q, complex_mul(GROUP_SUM(p, o, j, k), intercept_conj[p][o]));
-                    }
-                }
-                h[j][k] = q;
-            }
-        }
-        // H = Q + Q^H，再对角线移位
-        for (uint8_t j = 0; j < num; ++j) {
-            h[j][j].r = 2.0f * h[j][j].r;
-            h[j][j].i = 0.0f;
-            for (uint8_t k = j + 1; k < num; ++k) {
-                complex sum = { h[j][k].r + h[k][j].r, h[j][k].i - h[k][j].i };
-                h[j][k] = sum;
-                h[k][j] = complex_conj(sum);
-            }
-        }
-        float diag_shift = 0.0f;
-        for (uint8_t j = 0; j < num; ++j) {
-            float row_sum = 0.0f;
-            for (uint8_t k = 0; k < num; ++k) {
-                row_sum += complex_abs(h[j][k]);
-            }
-            diag_shift = (row_sum > diag_shift) ? row_sum : diag_shift;
-        }
-        for (uint8_t j = 0; j < num; ++j) {
-            h[j][j].r = diag_shift;
-            h[j][j].i = 0.0f;
-        }
-        // 幂迭代，从当前估计 x = exp(-j * psi) 开始
-        for (uint8_t k = 0; k < num; ++k) {
-            x[k] = complex_conj(ctx->subevent_phasor[k]);
-        }
-        for (uint8_t iter = 0; iter < PHASE_POWER_ITER_NUM; ++iter) {
-            for (uint8_t j = 0; j < num; ++j) {
-                complex sum = {0.0f, 0.0f};
-                for (uint8_t k = 0; k < num; ++k) {
-                    complex_acc(&sum, complex_mul(h[j][k], x[k]));
-                }
-                x_next[j] = complex_unit(sum);
-            }
-            memcpy_s(x, sizeof(x), x_next, sizeof(x_next));
-        }
-        // exp(j * psi_k) = conj(x_k)，并使 psi_0 = 0
-        for (uint8_t k = 0; k < num; ++k) {
-            ctx->subevent_phasor[k] = complex_mul(complex_conj(x[k]), x[0]);
-        }
-        // 用所有分组更新截距
-        for (uint8_t p = 0; p < ctx->path_num; ++p) {
-            for (uint8_t o = 0; o < SUBEVENT_MOTION_PAIR_ORDER; ++o) {
-                complex sum = {0.0f, 0.0f};
-                for (uint8_t j = 0; j < num; ++j) {
-                    for (uint8_t k = 0; k < num; ++k) {
-                        // exp(-j * (psi_k - psi_j)) = exp(j * psi_j) * conj(exp(j * psi_k))
-                        complex rotation = complex_mul_conj(ctx->subevent_phasor[j], ctx->subevent_phasor[k]);
-                        complex_acc(&sum, complex_mul(GROUP_SUM(p, o, j, k), rotation));
-                    }
-                }
-                intercept_conj[p][o] = complex_conj(complex_unit(sum));
-            }
-        }
+        build_phase_matrix(ctx, intercept_conj, h);
+        power_iteration(ctx, h);
+        update_intercept(ctx, intercept_conj);
     }
-#undef GROUP_SUM
 }
 
 errcode_t subevent_motion_solve_phase(SubeventMotionCtx* ctx, SubeventMotionResult* res)
