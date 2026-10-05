@@ -7,7 +7,11 @@ PYTHON  ?= python3
 SRCS    := subevent_motion_alg.c test/subevent_motion_test.c
 DEPS    := $(SRCS) subevent_motion_alg.h test/port/common_util.h test/port/securec.h
 
-all: subevent_motion_test_o1 subevent_motion_test_o2
+all: subevent_motion_test_o1 subevent_motion_test_o2 replay_dump
+
+# 用固件 [jdps_dump] 输入回放：./replay_dump firmware.log
+replay_dump: subevent_motion_alg.c subevent_motion_alg.h test/replay_dump_main.c test/port/common_util.h test/port/securec.h
+	$(CC) $(CFLAGS) -D_DEFAULT_SOURCE -I. -Itest/port -o $@ subevent_motion_alg.c test/replay_dump_main.c -lm
 
 subevent_motion_test_o%: $(DEPS)
 	$(CC) $(CFLAGS) -DSUBEVENT_MOTION_PAIR_ORDER=$* -D_DEFAULT_SOURCE -I. -Itest/port -o $@ $(SRCS) -lm
@@ -20,6 +24,6 @@ test: all test/vectors.txt
 	./subevent_motion_test_o2 test/vectors.txt
 
 clean:
-	rm -f subevent_motion_test_o1 subevent_motion_test_o2 test/vectors.txt
+	rm -f subevent_motion_test_o1 subevent_motion_test_o2 replay_dump test/vectors.txt
 
 .PHONY: all test clean

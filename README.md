@@ -40,4 +40,5 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
   subevent_motion_solve_phase(&ctx, &res);
   for (p = 0; p < path_num; p++) subevent_motion_iq_compensation(&ctx, iq_p);     /* 第 3 遍，之后做 IFFT */
   ```
+- 固件输入 dump 回放（定位固件结果与 log_replay 不一致）：见 `docs/firmware_dump.md`，工具为 `python -m cs_agc.replay_dump` 和 `c/replay_dump`。
 - 回归测试（与 Python 参考实现逐点对比，PAIR_ORDER = 1 / 2 两种编译各跑一遍）：`cd c && make test`。`c/test/port/` 下是工程头文件（`common_util.h`、`securec.h`）的主机测试桩，集成时使用工程自己的头文件。
