@@ -42,3 +42,12 @@ python -m cs_agc.log_replay data/*.txt --out log_plots          # 每个 procedu
   ```
 - 固件输入 dump 回放（定位固件结果与 log_replay 不一致）：见 `docs/firmware_dump.md`，工具为 `python -m cs_agc.replay_dump` 和 `c/replay_dump`。
 - 回归测试（与 Python 参考实现逐点对比，PAIR_ORDER = 1 / 2 两种编译各跑一遍）：`cd c && make test`。`c/test/port/` 下是工程头文件（`common_util.h`、`securec.h`）的主机测试桩，集成时使用工程自己的头文件。
+
+## 算法可视化
+
+`docs/jdps_explorer.html`（浏览器直接打开）：逐步展示 JDPS 的输入、配对分组、速度谱与可信度、多普勒补偿、subevent 相位估计（H 矩阵、幂迭代收敛）、补偿后测距。可以切换仿真（速度、距离、SNR、K、多径、种子可调）和 `data/sample_log.txt` 实测样例。
+
+```
+python -m cs_agc.build_viz                                   # 由 viz/explorer.template.html + viz/jdps_core.js 生成页面
+python -m cs_agc.build_viz --cases /tmp/cases.json && node viz/test_core.js /tmp/cases.json   # JS 与 Python 参考实现逐项比对
+```
