@@ -1,0 +1,1159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JDPS 算法透视</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;650;750&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+/* Layout: a lab-notebook column; each pipeline step is a numbered section with a margin rail, controls pinned above. */
+:root {
+  --bg: #f3f5f5;
+  --panel: #ffffff;
+  --ink: #12181b;
+  --ink-2: #47545a;
+  --muted: #76838a;
+  --rule: #d8dfe1;
+  --grid: #e8edee;
+  --accent: #0b6b72;
+  --accent-soft: #dcefef;
+  --before: #9aa4a9;
+  --good: #1a7f37;
+  --good-soft: #e1f2e5;
+  --bad: #b42318;
+  --bad-soft: #fbe6e3;
+  --se0: #2a78d6; --se1: #eb6834; --se2: #1baf7a; --se3: #eda100;
+  --cat-a: #0b6b72; --cat-b: #6250d6;
+  --heat: 42, 120, 214;
+  --font-display: "Archivo", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1315; --panel: #151c1f; --ink: #e5ebed; --ink-2: #b0bcc1; --muted: #7d8a90; --rule: #2a3438; --grid: #1f282b;
+    --accent: #45b5bc; --accent-soft: #163236; --before: #6b787e; --good: #4cc274; --good-soft: #15301f; --bad: #f07a6a; --bad-soft: #3a1c18;
+    --se0: #3987e5; --se1: #d95926; --se2: #199e70; --se3: #c98500; --cat-a: #45b5bc; --cat-b: #9085e9; --heat: 57, 135, 229;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1315; --panel: #151c1f; --ink: #e5ebed; --ink-2: #b0bcc1; --muted: #7d8a90; --rule: #2a3438; --grid: #1f282b;
+  --accent: #45b5bc; --accent-soft: #163236; --before: #6b787e; --good: #4cc274; --good-soft: #15301f; --bad: #f07a6a; --bad-soft: #3a1c18;
+  --se0: #3987e5; --se1: #d95926; --se2: #199e70; --se3: #c98500; --cat-a: #45b5bc; --cat-b: #9085e9; --heat: 57, 135, 229;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 30px; font-weight: 750; }
+h2 { font-size: 21px; font-weight: 650; }
+h3 { font-size: 14px; font-weight: 650; color: var(--ink-2); }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.lede { color: var(--ink-2); max-width: 68ch; margin-top: 8px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+
+/* controls */
+.controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--rule); margin-inline: -20px; padding: 10px 20px; margin-top: 20px; }
+.ctl-row { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; }
+.ctl { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ctl label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+.ctl .val { color: var(--ink); text-transform: none; letter-spacing: 0; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.seg button { font: inherit; font-size: 13px; padding: 5px 11px; border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+.seg button:focus-visible, select:focus-visible, input:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="range"] { width: 130px; accent-color: var(--accent); }
+select, input[type="number"] { font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); color: var(--ink); }
+input[type="number"] { width: 78px; }
+.btn { font: inherit; font-size: 13px; padding: 5px 11px; border: 1px solid var(--accent); color: var(--accent); background: var(--panel); border-radius: 6px; cursor: pointer; }
+.btn:hover { background: var(--accent-soft); }
+.sim-only[hidden] { display: none; }
+
+/* summary */
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; margin-top: 22px; }
+.kpi { background: var(--panel); padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.kpi .k { font-size: 12px; color: var(--muted); }
+.kpi .v { font-family: var(--font-mono); font-size: 20px; font-variant-numeric: tabular-nums; }
+.kpi .s { font-size: 12px; color: var(--ink-2); font-family: var(--font-mono); }
+.pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 7px; border-radius: 999px; font-family: var(--font-body); vertical-align: middle; }
+.pill.ok { background: var(--good-soft); color: var(--good); }
+.pill.no { background: var(--bad-soft); color: var(--bad); }
+
+/* pipeline strip */
+.pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 22px; counter-reset: st; }
+.pipeline a { display: flex; flex-direction: column; gap: 3px; padding: 10px 11px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); color: inherit; text-decoration: none; min-width: 0; position: relative; }
+.pipeline a:hover { border-color: var(--accent); }
+.pipeline .n { font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+.pipeline .t { font-weight: 600; font-size: 13.5px; line-height: 1.3; }
+.pipeline .r { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+@media (max-width: 860px) { .pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* steps */
+.step { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 0 14px; margin-top: 44px; scroll-margin-top: 140px; }
+.rail { display: flex; flex-direction: column; align-items: center; }
+.rail .badge { width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--accent); color: var(--accent); display: grid; place-items: center; font-family: var(--font-mono); font-weight: 500; font-size: 15px; background: var(--panel); }
+.rail .line { flex: 1; width: 1.5px; background: var(--rule); margin-top: 6px; }
+.step-body { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.api { font-family: var(--font-mono); font-size: 12px; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 4px; overflow-wrap: anywhere; }
+.explain { color: var(--ink-2); max-width: 74ch; display: flex; flex-direction: column; gap: 6px; }
+.explain ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.formula { font-family: var(--font-mono); font-size: 13px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 12px; color: var(--ink); overflow-x: auto; white-space: pre; }
+.figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.figs.one { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 760px) { .figs { grid-template-columns: minmax(0, 1fr); } .step { grid-template-columns: 34px minmax(0, 1fr); gap: 0 10px; } .rail .badge { width: 30px; height: 30px; font-size: 13px; } }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 12px 8px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+figcaption { font-size: 13px; font-weight: 600; color: var(--ink); }
+figcaption .sub { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart svg text { font-family: var(--font-mono); font-size: 10.5px; fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { width: 14px; height: 10px; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: var(--font-mono); font-size: 11.5px; padding: 5px 8px; border-radius: 5px; white-space: pre; z-index: 3; transform: translate(-50%, calc(-100% - 10px)); }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; color: var(--ink-2); }
+.facts b { font-family: var(--font-mono); font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 9px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { font-weight: 600; color: var(--muted); font-size: 11.5px; text-align: right; }
+td:first-child, th:first-child { text-align: left; }
+td.mono { font-family: var(--font-mono); }
+.mat { display: flex; flex-wrap: wrap; gap: 16px; }
+.mat table td { text-align: center; min-width: 74px; font-family: var(--font-mono); border: 1px solid var(--rule); }
+.mat table th { text-align: center; }
+.mat .cap { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.note { font-size: 12.5px; color: var(--muted); max-width: 80ch; }
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; max-width: 86ch; }
+@media (prefers-reduced-motion: no-preference) { .pipeline a, .btn { transition: border-color .15s, background .15s; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Channel Sounding · Mode-2 PBR · 多 subevent 拼接</div>
+    <h1 style="margin-top:6px">JDPS 算法透视</h1>
+    <p class="lede">Joint Doppler &amp; Phase Stitching：先在相邻信道配对上联合搜索速度，再用补偿后的配对估计每个 subevent 的未知 AGC 相位，最后把整段 IQ 拼成连续的频响交给 IFFT 测距。页面里的每一步都由浏览器实时计算（与 <code>cs_agc/algorithms.py</code> 和 C 模块 <code>subevent_motion_alg.c</code> 逐项一致），改动参数后所有中间结果同步刷新。</p>
+  </header>
+
+  <div class="controls" role="region" aria-label="参数">
+    <div class="ctl-row">
+      <div class="ctl"><label>数据</label>
+        <div class="seg" id="src"><button type="button" data-v="sim" aria-pressed="true">仿真</button><button type="button" data-v="log" aria-pressed="false">实测 log</button></div></div>
+      <div class="ctl sim-only"><label for="v">真实速度 <span class="val num" id="v-o"></span></label><input id="v" type="range" min="-12" max="12" step="0.1" value="4.2"></div>
+      <div class="ctl sim-only"><label for="d">LOS 距离 <span class="val num" id="d-o"></span></label><input id="d" type="range" min="1" max="20" step="0.1" value="6.5"></div>
+      <div class="ctl sim-only"><label for="snr">单程 SNR <span class="val num" id="snr-o"></span></label><input id="snr" type="range" min="-5" max="35" step="1" value="20"></div>
+      <div class="ctl sim-only"><label>subevent 数 K</label>
+        <div class="seg" id="K"><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="3" aria-pressed="true">3</button><button type="button" data-v="4" aria-pressed="false">4</button></div></div>
+      <div class="ctl sim-only"><label for="sc">多径</label>
+        <select id="sc"><option value="LOS">LOS (K=10 dB)</option><option value="MP_mod" selected>中等多径</option><option value="MP_severe">强多径</option></select></div>
+      <div class="ctl sim-only"><label for="seed">随机种子</label>
+        <div style="display:flex;gap:6px"><input id="seed" type="number" min="1" value="11"><button class="btn" type="button" id="reroll">换一组</button></div></div>
+      <div class="ctl"><label>PAIR_ORDER</label>
+        <div class="seg" id="order"><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="true">2</button></div></div>
+      <div class="ctl"><label>查看路径</label>
+        <div class="seg" id="path"><button type="button" data-v="0" aria-pressed="true">0</button><button type="button" data-v="1" aria-pressed="false">1</button><button type="button" data-v="2" aria-pressed="false">2</button><button type="button" data-v="3" aria-pressed="false">3</button></div></div>
+    </div>
+  </div>
+
+  <section class="summary" id="summary" aria-label="结果摘要"></section>
+  <nav class="pipeline" id="pipeline" aria-label="算法流程"></nav>
+
+  <!-- step 0 -->
+  <section class="step" id="s0">
+    <div class="rail"><div class="badge">0</div><div class="line"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>输入与问题现象</h2><span class="api">channel_select_t + 每路 80 点 IQ</span></div>
+      <div class="explain">
+        <p>72 个信道随机跳频，按顺序分进 K 个 subevent。拼接时有两种误差：</p>
+        <ul>
+          <li><b>AGC 相位</b>：每个 subevent 两端各选一次 AGC 档位，给这一段所有 IQ 乘上一个未知常数相位 θ<sub>k</sub>。4 条路径共用（AGC 按设备设置）。</li>
+          <li><b>多普勒</b>：目标以速度 v 运动时，第 n 步的相位多出 −4π f<sub>n</sub> v τ<sub>n</sub> / c，随时间线性累积。subevent 之间 40 ms 的间隔把它放大成跳变。</li>
+        </ul>
+        <p>右图把 IQ 原始相位按频率排开（未做任何去斜率处理）。静止且没有 AGC 跳变时，相位随频率按 −4π d / c 的斜率线性变化（折叠到 ±π）；实际上每个 subevent 各自平移、倾斜，IFFT 看到的是被打乱的频响。</p>
+      </div>
+      <div class="figs">
+        <figure><figcaption>跳频时序<span class="sub">每个点是一个 mode-2 步；横轴为测量时刻，纵轴为信道号</span></figcaption><div class="chart" id="c-timeline"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>原始相位 vs 频率（路径 <span class="pathno">0</span>）<span class="sub">∠y，未去除距离对应的线性相位</span></figcaption><div class="chart" id="c-raw"></div><div class="legend" data-legend="se"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- step 1 -->
+  <section class="step" id="s1">
+    <div class="rail"><div class="badge">1</div><div class="line"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>相邻信道配对与分组</h2><span class="api">subevent_motion_add_speed_path(ctx, iq)</span></div>
+      <div class="explain">
+        <p>对每个已测信道 c，如果 c+o（o = 1…PAIR_ORDER）也测过，就取一对乘积：</p>
+        <div class="formula">z = y[c+o] · conj(y[c])
+∠z ≈ 距离项(o) + (ψ_j − ψ_k) − v · α,   α = 4π/c · (f_m τ_m − f_n τ_n)</div>
+        <p>两个信道只差 o MHz，多径频响几乎相同，所以 z 的相位只剩一个常数加上 −v·α。按 (o, 低信道所在 subevent k, 高信道所在 subevent j) 分组后，同组的常数相同，可以相干累加。跨 subevent 的组（k ≠ j）还带着 ψ<sub>j</sub> − ψ<sub>k</sub>，这正是第 4 步要用的信息。</p>
+        <p>固件里逐路调用：每次只需要一路 IQ 在内存里，按组累加后即可丢弃。</p>
+      </div>
+      <div class="facts" id="f1"></div>
+      <div class="mat" id="m-groups"></div>
+      <div class="figs">
+        <figure><figcaption>假设 v = 0 时每对的相位<span class="sub">∠z 减去所在组的公共相位；横轴 α 为该对的“多普勒灵敏度”</span></figcaption><div class="chart" id="c-pair0"></div><div class="legend" data-legend="pair"></div></figure>
+        <figure><figcaption>代入 v̂ 后每对的相位<span class="sub">∠(z·e<sup>jv̂α</sup>) 减去组公共相位；速度正确时所有点收拢到 0 附近</span></figcaption><div class="chart" id="c-pair1"></div><div class="legend" data-legend="pair"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- step 2 -->
+  <section class="step" id="s2">
+    <div class="rail"><div class="badge">2</div><div class="line"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>速度搜索与可信度判断</h2><span class="api">subevent_motion_solve_speed(ctx)</span></div>
+      <div class="explain">
+        <div class="formula">M(v) = Σ_路径 Σ_组 | Σ_组内 z · e^{j v α} |      v ∈ [−11, 11] m/s，步长 0.25（89 点）
+score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4) · S_g</div>
+        <ul>
+          <li>组内相干、组间和路径间非相干：未知的 ψ<sub>k</sub> 和每条路径的距离项都被绝对值消掉，速度估计不受 AGC 相位影响。</li>
+          <li>峰值做抛物线插值得到 v̂。</li>
+          <li>μ、σ 是纯噪声时 M 的均值和标准差，只取决于各组能量 S<sub>g</sub>。score &lt; 5 或峰值落在网格边缘时判为无效，补偿用 v = 0。</li>
+        </ul>
+      </div>
+      <div class="facts" id="f2"></div>
+      <div class="figs one">
+        <figure><figcaption>速度谱 M(v)<span class="sub">细灰线为各组单独的谱（各自按峰值缩放到总谱高度，只比较形状）；水平线为噪声均值 μ 与判决门限 μ + 5σ</span></figcaption><div class="chart" id="c-spec"></div><div class="legend" id="lg-spec"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- step 3 -->
+  <section class="step" id="s3">
+    <div class="rail"><div class="badge">3</div><div class="line"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>多普勒与距离迁移补偿</h2><span class="api">subevent_motion_add_phase_path 内部</span></div>
+      <div class="explain">
+        <div class="formula">y₁[n] = y[n] · exp(+j · 4π/c · f_n · v · τ_n)</div>
+        <p>同一个相位因子同时消除多普勒和距离迁移（目标在 τ 时间内移动 v·τ）。补偿后每个 subevent 内部的相位只剩距离决定的线性斜率，各段之间只差一个常数 ψ<sub>k</sub>（AGC 相位，加上速度估计误差在 subevent 间留下的残余）。</p>
+      </div>
+      <div class="figs">
+        <figure><figcaption>多普勒补偿后的相位（路径 <span class="pathno">0</span>）<span class="sub">∠y₁；每个 subevent 内部的点各自落在同一斜率的直线上，各段之间的整体平移就是待估的 ψ<sub>k</sub></span></figcaption><div class="chart" id="c-dop"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>补偿前后同一 subevent 内的相位斜率<span class="sub">同一 subevent 内的配对 ∠z（未去截距）；补偿前随 Δt 倾斜，补偿后变成与 Δt 无关的常数（o = 1、2 各一个，由距离决定）</span></figcaption><div class="chart" id="c-slope"></div><div class="legend" id="lg-slope"></div></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- step 4 -->
+  <section class="step" id="s4">
+    <div class="rail"><div class="badge">4</div><div class="line"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>subevent 相位估计</h2><span class="api">subevent_motion_solve_phase(ctx, &amp;res)</span></div>
+      <div class="explain">
+        <ul>
+          <li>用补偿后的 y₁ 重新配对，按组求和得到 Z[o][k][j]。所有路径共用一组 ψ。</li>
+          <li>截距 c<sub>o</sub>（距离项）先由 subevent 内部的组（k = j）估出，去掉后构造 K×K Hermitian 矩阵 H = Q + Qᴴ，H[k][j] ≈ |·| e<sup>j(ψ_j − ψ_k)</sup>。</li>
+          <li>对角线加上最大行和作为偏移（避免 K = 2 时幂迭代振荡），幂迭代 8 次取主特征向量得到 ψ；再用全部组更新截距，共 3 轮。ψ<sub>0</sub> 固定为 0。</li>
+        </ul>
+      </div>
+      <div class="mat" id="m-H"></div>
+      <div class="figs">
+        <figure><figcaption>幂迭代收敛过程<span class="sub">3 轮 × 8 次；竖线分隔每一轮，虚线为仿真真值</span></figcaption><div class="chart" id="c-iter"></div><div class="legend" data-legend="se-psi"></div></figure>
+        <figure><figcaption>估计结果<span class="sub">ψ<sub>k</sub> 以 subevent 0 为参考</span></figcaption><div class="tbl-wrap" id="t-psi"></div><p class="note" id="psi-note" style="margin-top:6px"></p></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- step 5 -->
+  <section class="step" id="s5">
+    <div class="rail"><div class="badge">5</div><div class="line" style="background:transparent"></div></div>
+    <div class="step-body">
+      <div class="step-head"><h2>IQ 补偿与 IFFT 测距</h2><span class="api">subevent_motion_iq_compensation(ctx, iq) → IFFT</span></div>
+      <div class="explain">
+        <div class="formula">y₂[n] = y₁[n] · e^{−j ψ_{k(n)}}        （逐路调用，原地修改）</div>
+        <p>补偿后的 IQ 放回 1 MHz 网格（未测信道填 0），加 Hann 窗做 1024 点 IFFT，4 条路径非相干合并后找首径。</p>
+      </div>
+      <div class="figs">
+        <figure><figcaption>最终相位（路径 <span class="pathno">0</span>）<span class="sub">∠y₂；各 subevent 应落在同一条（折叠的）直线上</span></figcaption><div class="chart" id="c-final"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>时延谱（4 路非相干）<span class="sub">竖线为首径检测结果</span></figcaption><div class="chart" id="c-prof"></div><div class="legend" id="lg-prof"></div></figure>
+      </div>
+      <div class="tbl-wrap" id="t-dist"></div>
+    </div>
+  </section>
+
+  <footer>
+    <p>算法：JDPS（Joint Doppler &amp; Phase Stitching），设计文档 <code>docs/multi_subevent_agc_design.md</code>。本页的计算代码是 <code>viz/jdps_core.js</code>，由 <code>node viz/test_core.js</code> 对照 Python 参考实现逐项校验（速度谱、score、ψ、测距结果误差 &lt; 1e-6）。</p>
+    <p>实测样例来自 <code>data/sample_log.txt</code>，时序模型：每个 subevent 开头 483 µs mode-0，mode-2 每步 715 µs，subevent 间隔 40 ms。仿真模型与 <code>cs_agc/sim_model.py</code> 相同，但随机数发生器不同，同一种子不会得到与 Python 相同的样本。</p>
+  </footer>
+</div>
+
+<script>
+/*
+ * JDPS (Joint Doppler & Phase Stitching) 浏览器端实现 + 仿真模型，逐步保留中间结果用于可视化。
+ * 与 cs_agc/algorithms.py::jdps、cs_agc/sim_model.py::generate、cs_agc/ranging.py 一一对应，
+ * 由 viz/test_core.js 用 Python 导出的用例逐项比对。
+ */
+(function (root) {
+  "use strict";
+  const C = 299792458.0, F0 = 2402e6, DF = 1e6, F_C = 2440e6;
+  const K_DOP = 4 * Math.PI / C;
+  const N_FFT = 1024, N_BINS = 79, FIRST_PATH_DB = 6.0, D_MAX = 60.0;
+
+  const wrap = (p) => Math.atan2(Math.sin(p), Math.cos(p));
+
+  // ------------------------------------------------------------------ helpers
+  function adjacentPairs(ch, orders) {
+    const pos = new Map();
+    ch.forEach((c, i) => pos.set(c, i));
+    const n = [], m = [], o = [];
+    for (const od of orders) {
+      for (const [c, i] of pos) {
+        const j = pos.get(c + od);
+        if (j !== undefined) { n.push(i); m.push(j); o.push(od); }
+      }
+    }
+    return { n, m, o };
+  }
+
+  function parabolicPeak(grid, metric) {
+    let k = 0;
+    for (let i = 1; i < metric.length; i++) if (metric[i] > metric[k]) k = i;
+    if (k > 0 && k < grid.length - 1) {
+      const a = metric[k - 1], b = metric[k], c = metric[k + 1];
+      const den = a - 2 * b + c;
+      if (den < 0) return grid[k] + 0.5 * (a - c) / den * (grid[1] - grid[0]);
+    }
+    return grid[k];
+  }
+
+  function vGrid(cfg) {
+    const n = Math.round((cfg.vMax + cfg.vGuard) / cfg.vStep);
+    const g = [];
+    for (let i = -n; i <= n; i++) g.push(i * cfg.vStep);
+    return g;
+  }
+
+  const defaultCfg = () => ({ vMax: 10, vStep: 0.25, vGuard: 1, minScore: 5, orders: [1, 2], nPowerIter: 8, nRefineIter: 3 });
+
+  // y: {re: [A][N], im: [A][N]}; returns a new object multiplied per sample by exp(j*ph[a][n]) or ph[n]
+  function rotate(y, phFn) {
+    const A = y.re.length, N = y.re[0].length;
+    const re = [], im = [];
+    for (let a = 0; a < A; a++) {
+      const r = new Float64Array(N), i = new Float64Array(N);
+      for (let k = 0; k < N; k++) {
+        const p = phFn(a, k), c = Math.cos(p), s = Math.sin(p);
+        r[k] = y.re[a][k] * c - y.im[a][k] * s;
+        i[k] = y.re[a][k] * s + y.im[a][k] * c;
+      }
+      re.push(r); im.push(i);
+    }
+    return { re, im };
+  }
+
+  function pairProducts(y, pr) {
+    const A = y.re.length, P = pr.n.length, zr = [], zi = [];
+    for (let a = 0; a < A; a++) {
+      const r = new Float64Array(P), i = new Float64Array(P);
+      for (let p = 0; p < P; p++) {
+        const n = pr.n[p], m = pr.m[p];
+        const ar = y.re[a][m], ai = y.im[a][m], br = y.re[a][n], bi = y.im[a][n];
+        r[p] = ar * br + ai * bi;          // y[m] * conj(y[n])
+        i[p] = ai * br - ar * bi;
+      }
+      zr.push(r); zi.push(i);
+    }
+    return { re: zr, im: zi };
+  }
+
+  // ------------------------------------------------------------------ JDPS
+  /**
+   * meas: {y:{re,im}, f[N], ch[N], t[N], se[N], tRef}
+   * returns every intermediate result of the pipeline
+   */
+  function jdps(meas, cfgIn) {
+    const cfg = Object.assign(defaultCfg(), cfgIn || {});
+    const { y, f, ch, se } = meas;
+    const A = y.re.length, N = f.length;
+    const tau = meas.t.map((t) => t - meas.tRef);
+    let K = 0;
+    se.forEach((s) => { if (s + 1 > K) K = s + 1; });
+    const orders = cfg.orders, O = orders.length;
+    const pr = adjacentPairs(ch, orders);
+    const P = pr.n.length;
+    const G = O * K * K;
+    const g = pr.n.map((n, p) => (orders.indexOf(pr.o[p]) * K + se[n]) * K + se[pr.m[p]]);
+
+    // ---- stage 1: speed search
+    const z = pairProducts(y, pr);
+    const seMid = [];
+    for (let k = 0; k < K; k++) {
+      let s = 0, c = 0;
+      for (let i = 0; i < N; i++) if (se[i] === k) { s += tau[i]; c++; }
+      seMid.push(c ? s / c : 0);
+    }
+    const alphaRed = pr.n.map((n, p) => {
+      const m = pr.m[p];
+      const alpha = K_DOP * (f[m] * tau[m] - f[n] * tau[n]);
+      return alpha - K_DOP * F_C * (seMid[se[m]] - seMid[se[n]]);
+    });
+    const grid = vGrid(cfg);
+    const metric = new Float64Array(grid.length);
+    const groupMetric = Array.from({ length: G }, () => new Float64Array(grid.length));
+    const accR = new Float64Array(G), accI = new Float64Array(G);
+    for (let vi = 0; vi < grid.length; vi++) {
+      const v = grid[vi];
+      for (let a = 0; a < A; a++) {
+        accR.fill(0); accI.fill(0);
+        for (let p = 0; p < P; p++) {
+          const ph = v * alphaRed[p], c = Math.cos(ph), s = Math.sin(ph);
+          accR[g[p]] += c * z.re[a][p] - s * z.im[a][p];
+          accI[g[p]] += c * z.im[a][p] + s * z.re[a][p];
+        }
+        for (let q = 0; q < G; q++) {
+          const mag = Math.hypot(accR[q], accI[q]);
+          metric[vi] += mag;
+          groupMetric[q][vi] += mag;
+        }
+      }
+    }
+    const vHat = parabolicPeak(grid, metric);
+    let kPeak = 0;
+    for (let i = 1; i < metric.length; i++) if (metric[i] > metric[kPeak]) kPeak = i;
+
+    const groupPairs = new Array(G).fill(0);
+    g.forEach((q) => groupPairs[q]++);
+    let mu = 0, var_ = 0;
+    for (let a = 0; a < A; a++) {
+      const S = new Float64Array(G);
+      for (let p = 0; p < P; p++) S[g[p]] += z.re[a][p] ** 2 + z.im[a][p] ** 2;
+      for (let q = 0; q < G; q++) { mu += Math.sqrt(Math.PI / 4 * S[q]); var_ += (1 - Math.PI / 4) * S[q]; }
+    }
+    const sigma = Math.sqrt(var_);
+    const base = { cfg, K, A, N, O, G, tau, pairs: pr, g, groupPairs, z, alphaRed, seMid, grid, metric, groupMetric, vHat, kPeak, mu, sigma };
+    if (P === 0 || sigma === 0) {
+      return Object.assign(base, { status: "no_signal", score: 0, vValid: false, atEdge: false, vUsed: 0, y1: y, y2: y, psi: new Array(K).fill(0), trace: [] });
+    }
+    const score = (metric[kPeak] - mu) / sigma;
+    const atEdge = kPeak === 0 || kPeak === grid.length - 1;
+    const vValid = score >= cfg.minScore && !atEdge;
+    const vUsed = vValid ? vHat : 0;
+
+    // ---- stage 2: Doppler + range migration compensation
+    const y1 = rotate(y, (a, n) => K_DOP * f[n] * vUsed * tau[n]);
+
+    // ---- stage 3: subevent phase
+    const z1 = pairProducts(y1, pr);
+    // Z[a][oi][k][j] as flat {re,im} arrays of length A*G
+    const Zr = new Float64Array(A * G), Zi = new Float64Array(A * G);
+    for (let a = 0; a < A; a++) for (let p = 0; p < P; p++) { Zr[a * G + g[p]] += z1.re[a][p]; Zi[a * G + g[p]] += z1.im[a][p]; }
+    const sync = phaseSync(Zr, Zi, A, O, K, cfg.nPowerIter, cfg.nRefineIter);
+    const psi = sync.psi;
+    const y2 = rotate(y1, (a, n) => -psi[se[n]]);
+    return Object.assign(base, { status: "ok", score, vValid, atEdge, vUsed, y1, z1, Zr, Zi, y2, psi, c: sync.c, cInit: sync.cInit, trace: sync.trace });
+  }
+
+  function phaseSync(Zr, Zi, A, O, K, nPower, nRefine) {
+    const G = O * K * K, idx = (a, o, k, j) => a * G + (o * K + k) * K + j;
+    const c = [];
+    for (let a = 0; a < A; a++) {
+      const row = [];
+      for (let o = 0; o < O; o++) {
+        let r = 0, i = 0;
+        for (let k = 0; k < K; k++) { r += Zr[idx(a, o, k, k)]; i += Zi[idx(a, o, k, k)]; }
+        row.push(Math.atan2(i, r));
+      }
+      c.push(row);
+    }
+    const cInit = c.map((r) => r.slice());
+    let psi = new Array(K).fill(0);
+    const trace = [];
+    if (K === 1) return { psi, c, cInit, trace };
+    for (let it = 0; it < nRefine; it++) {
+      const Qr = Array.from({ length: K }, () => new Float64Array(K)), Qi = Array.from({ length: K }, () => new Float64Array(K));
+      for (let a = 0; a < A; a++) for (let o = 0; o < O; o++) {
+        const cc = Math.cos(-c[a][o]), ss = Math.sin(-c[a][o]);
+        for (let k = 0; k < K; k++) for (let j = 0; j < K; j++) {
+          const zr = Zr[idx(a, o, k, j)], zi = Zi[idx(a, o, k, j)];
+          Qr[k][j] += zr * cc - zi * ss; Qi[k][j] += zr * ss + zi * cc;
+        }
+      }
+      const Hr = [], Hi = [];
+      for (let k = 0; k < K; k++) {
+        Hr.push(new Float64Array(K)); Hi.push(new Float64Array(K));
+        for (let j = 0; j < K; j++) { Hr[k][j] = Qr[k][j] + Qr[j][k]; Hi[k][j] = Qi[k][j] - Qi[j][k]; }
+      }
+      let shift = 0;
+      for (let k = 0; k < K; k++) { let s = 0; for (let j = 0; j < K; j++) s += Math.hypot(Hr[k][j], Hi[k][j]); shift = Math.max(shift, s); }
+      const H = { re: Hr.map((r) => Array.from(r)), im: Hi.map((r) => Array.from(r)) };
+      for (let k = 0; k < K; k++) { Hr[k][k] = shift; Hi[k][k] = 0; }
+      let xr = psi.map((p) => Math.cos(-p)), xi = psi.map((p) => Math.sin(-p));
+      const iters = [];
+      for (let t = 0; t < nPower; t++) {
+        const nr = new Array(K).fill(0), ni = new Array(K).fill(0);
+        for (let k = 0; k < K; k++) for (let j = 0; j < K; j++) {
+          nr[k] += Hr[k][j] * xr[j] - Hi[k][j] * xi[j];
+          ni[k] += Hr[k][j] * xi[j] + Hi[k][j] * xr[j];
+        }
+        for (let k = 0; k < K; k++) { const mag = Math.hypot(nr[k], ni[k]) + 1e-30; nr[k] /= mag; ni[k] /= mag; }
+        xr = nr; xi = ni;
+        const p = xr.map((r, k) => -Math.atan2(xi[k], r));
+        iters.push(p.map((v) => wrap(v - p[0])));
+      }
+      psi = xr.map((r, k) => -Math.atan2(xi[k], r));
+      psi = psi.map((v) => wrap(v - psi[0]));
+      for (let a = 0; a < A; a++) for (let o = 0; o < O; o++) {
+        let r = 0, i = 0;
+        for (let k = 0; k < K; k++) for (let j = 0; j < K; j++) {
+          const ph = -(psi[j] - psi[k]), cc = Math.cos(ph), ss = Math.sin(ph);
+          const zr = Zr[idx(a, o, k, j)], zi = Zi[idx(a, o, k, j)];
+          r += zr * cc - zi * ss; i += zr * ss + zi * cc;
+        }
+        c[a][o] = Math.atan2(i, r);
+      }
+      trace.push({ H, shift, iters, psi: psi.slice(), c: c.map((r) => r.slice()) });
+    }
+    return { psi, c, cInit, trace };
+  }
+
+  // ------------------------------------------------------------------ IFFT ranging
+  function fftInPlace(re, im, inverse) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (inverse ? 2 : -2) * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let j = 0; j < len / 2; j++) {
+          const ur = re[i + j], ui = im[i + j];
+          const vr = re[i + j + len / 2] * cr - im[i + j + len / 2] * ci;
+          const vi = re[i + j + len / 2] * ci + im[i + j + len / 2] * cr;
+          re[i + j] = ur + vr; im[i + j] = ui + vi;
+          re[i + j + len / 2] = ur - vr; im[i + j + len / 2] = ui - vi;
+          const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
+        }
+      }
+    }
+  }
+
+  function delayProfile(y, ch, paths) {
+    const prof = new Float64Array(N_FFT);
+    const use = paths || y.re.map((_, a) => a);
+    for (const a of use) {
+      const re = new Float64Array(N_FFT), im = new Float64Array(N_FFT);
+      ch.forEach((c, n) => {
+        const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * (c + 1) / (N_BINS + 1));   // np.hanning(81)[1:-1]
+        re[c] = y.re[a][n] * w; im[c] = y.im[a][n] * w;
+      });
+      fftInPlace(re, im, true);
+      for (let k = 0; k < N_FFT; k++) prof[k] += (re[k] ** 2 + im[k] ** 2) / (N_FFT * N_FFT);
+    }
+    const dist = Array.from({ length: N_FFT }, (_, k) => k * C / (2 * N_FFT * DF));
+    return { dist, prof };
+  }
+
+  function estimateDistance(y, ch, paths) {
+    const { prof } = delayProfile(y, ch, paths);
+    const binM = C / (2 * N_FFT * DF);
+    const nMax = Math.ceil(D_MAX / binM);
+    const p = prof.slice(0, nMax);
+    let pk = 0;
+    for (let i = 1; i < nMax; i++) if (p[i] > p[pk]) pk = i;
+    const thr = p[pk] * Math.pow(10, -FIRST_PATH_DB / 10);
+    let k = pk;
+    for (let i = 1; i < nMax - 1; i++) if (p[i] >= thr && p[i] >= p[i - 1] && p[i] >= p[i + 1]) { k = i; break; }
+    if (k > 0 && k < nMax - 1) {
+      const a = Math.log(p[k - 1] + 1e-30), b = Math.log(p[k] + 1e-30), c = Math.log(p[k + 1] + 1e-30);
+      const den = a - 2 * b + c;
+      k = k + (den !== 0 ? 0.5 * (a - c) / den : 0);
+    }
+    return k * binM;
+  }
+
+  // ------------------------------------------------------------------ simulation
+  function rng(seed) {
+    let s = seed >>> 0;
+    const u = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const normal = () => { let a = u(); while (a === 0) a = u(); return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * u()); };
+    return { u, normal, uniform: (lo, hi) => lo + (hi - lo) * u(), exponential: (mean) => -mean * Math.log(1 - u()) };
+  }
+
+  const SCENARIOS = {
+    LOS: { nNlos: 2, kDb: 10, meanExcess: 3, decay: 6 },
+    MP_mod: { nNlos: 4, kDb: 3, meanExcess: 4, decay: 6 },
+    MP_severe: { nNlos: 6, kDb: 0, meanExcess: 3, decay: 6 },
+  };
+  const CS_CHANNELS = [];
+  for (let c = 2; c < 77; c++) if (c < 23 || c > 25) CS_CHANNELS.push(c);
+
+  function splitSteps(n, K) {
+    const out = [];
+    for (let k = 0; k < K; k++) out.push(Math.floor(n / K) + (k < n % K ? 1 : 0));
+    return out;
+  }
+
+  /** p: {seed, K, A, snrDb, d0, v, scenario, tMeas, tGap, seGap} */
+  function simulate(p) {
+    const R = rng(p.seed);
+    const tMeas = p.tMeas ?? 565e-6, tGap = p.tGap ?? 150e-6, seGap = p.seGap ?? 40e-3, tStep = tMeas + tGap;
+    const ch = CS_CHANNELS.slice();
+    for (let i = ch.length - 1; i > 0; i--) { const j = Math.floor(R.u() * (i + 1)); [ch[i], ch[j]] = [ch[j], ch[i]]; }
+    const counts = splitSteps(ch.length, p.K);
+    const se = [], idx = [];
+    counts.forEach((c, k) => { for (let i = 0; i < c; i++) { se.push(k); idx.push(i); } });
+    const seStart = [0];
+    for (let k = 1; k < p.K; k++) seStart.push(seStart[k - 1] + counts[k - 1] * tStep - tGap + seGap);
+    const t = se.map((k, n) => seStart[k] + idx[n] * tStep + tMeas / 2);
+    const tRef = t.reduce((s, v) => s + v, 0) / t.length;
+    const f = ch.map((c) => F0 + c * DF);
+
+    const sc = SCENARIOS[p.scenario] || SCENARIOS.MP_mod;
+    const excess = [0];
+    for (let i = 0; i < sc.nNlos; i++) excess.push(R.exponential(sc.meanExcess));
+    const nl = excess.slice(1).sort((a, b) => a - b);
+    const ex = [0].concat(nl);
+    let pn = nl.map((e) => Math.exp(-e / sc.decay));
+    const tot = pn.reduce((s, v) => s + v, 0) || 1;
+    pn = pn.map((v) => v / tot * Math.pow(10, -sc.kDb / 10));
+    const amp = [1].concat(pn).map(Math.sqrt);
+    const dP = ex.map((e) => p.d0 + e);
+
+    const A = p.A, N = ch.length;
+    const thI = [], thR = [];
+    for (let k = 0; k < p.K; k++) thI.push(R.uniform(0, 2 * Math.PI));
+    for (let k = 0; k < p.K; k++) thR.push(R.uniform(0, 2 * Math.PI));
+    const theta = thI.map((v, k) => wrap(v + thR[k]));
+    const h = { re: [], im: [] }, h0 = { re: [], im: [] };
+    for (let a = 0; a < A; a++) {
+      const ph = dP.map(() => R.uniform(0, 2 * Math.PI));
+      const hr = new Float64Array(N), hi = new Float64Array(N), h0r = new Float64Array(N), h0i = new Float64Array(N);
+      for (let n = 0; n < N; n++) {
+        for (let q = 0; q < dP.length; q++) {
+          const d = dP[q] + p.v * (t[n] - tRef);
+          const pp = ph[q] - 2 * Math.PI * f[n] * d / C, p0 = ph[q] - 2 * Math.PI * f[n] * dP[q] / C;
+          hr[n] += amp[q] * Math.cos(pp); hi[n] += amp[q] * Math.sin(pp);
+          h0r[n] += amp[q] * Math.cos(p0); h0i[n] += amp[q] * Math.sin(p0);
+        }
+      }
+      h.re.push(hr); h.im.push(hi);
+      h0.re.push(h0r.map((r, n) => r * r - h0i[n] * h0i[n])); h0.im.push(h0r.map((r, n) => 2 * r * h0i[n]));
+    }
+    let pSig = 0;
+    for (let a = 0; a < A; a++) for (let n = 0; n < N; n++) pSig += h.re[a][n] ** 2 + h.im[a][n] ** 2;
+    pSig /= A * N;
+    const sn = Math.sqrt(pSig / Math.pow(10, p.snrDb / 10) / 2);
+    const y = { re: [], im: [] };
+    for (let a = 0; a < A; a++) {
+      const r = new Float64Array(N), i = new Float64Array(N);
+      for (let n = 0; n < N; n++) {
+        const k = se[n];
+        const ci = Math.cos(thI[k]), si = Math.sin(thI[k]), cr = Math.cos(thR[k]), sr = Math.sin(thR[k]);
+        const ar = h.re[a][n] * ci - h.im[a][n] * si + sn * R.normal(), ai = h.re[a][n] * si + h.im[a][n] * ci + sn * R.normal();
+        const br = h.re[a][n] * cr - h.im[a][n] * sr + sn * R.normal(), bi = h.re[a][n] * sr + h.im[a][n] * cr + sn * R.normal();
+        r[n] = ar * br - ai * bi; i[n] = ar * bi + ai * br;
+      }
+      y.re.push(r); y.im.push(i);
+    }
+    return { y, f, ch, t, se, tRef, counts, truth: { d0: p.d0, v: p.v, theta, psi: theta.map((v) => wrap(v - theta[0])), hClean: h0, paths: { d: dP, amp } } };
+  }
+
+  const api = { C, F0, DF, F_C, K_DOP, N_FFT, wrap, adjacentPairs, parabolicPeak, vGrid, defaultCfg, rotate, jdps, phaseSync, delayProfile, estimateDistance, simulate, SCENARIOS, splitSteps };
+  if (typeof module !== "undefined" && module.exports) module.exports = api; else root.JDPS = api;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+<script>
+(function () {
+  "use strict";
+  const J = window.JDPS;
+  const LOG = {"re":[[5792.0,41307.0,50570.0,14054.0,21600.0,34602.0,43766.0,53727.0,17258.0,27071.0,0.0,41312.0,51213.0,73835.0,84270.0,74402.0,0.0,48794.0,61110.0,94599.0,44596.0,73748.0,48452.0,80019.0,89128.0,-58050.0,-19740.0,-53332.0,71945.0,-26864.0,94446.0,44928.0,-52948.0,90355.0,-41211.0,-77114.0,48800.0,82254.0,73401.0,-51802.0,64550.0,82825.0,-52590.0,24666.0,64491.0,63612.0,-38761.0,55769.0,-52472.0,43750.0,-17636.0,44676.0,50421.0,-3113.0,-3586.0,-4264.0,11385.0,-16362.0,97489.0,44680.0,-179528.0,201218.0,-18942.0,77018.0,-74578.0,121437.0,195133.0,84739.0,142772.0,222180.0,-59516.0,45196.0],[-12440.0,-12435.0,-34317.0,-29981.0,-26092.0,-24752.0,-16288.0,-19756.0,-7555.0,-31939.0,-18156.0,-41158.0,-89332.0,-39128.0,-30940.0,-23366.0,-37593.0,-77190.0,-69396.0,-28770.0,-63508.0,-67850.0,-63977.0,-64409.0,-33477.0,42965.0,1064.0,19828.0,-51054.0,-13189.0,-131040.0,-25562.0,-27720.0,-77427.0,-35696.0,187193.0,-63253.0,-54540.0,-122537.0,5210.0,-121936.0,-38657.0,81453.0,-9565.0,-50029.0,-40365.0,-1834.0,-88074.0,180263.0,-104384.0,28896.0,-46730.0,6913.0,-4212.0,-5745.0,11347.0,-43683.0,28544.0,-89824.0,-11442.0,338247.0,-222860.0,11025.0,3134.0,159845.0,-252651.0,-201597.0,-119661.0,-80588.0,-212842.0,8934.0,-107520.0],[-5779.0,71937.0,-30031.0,10322.0,38821.0,45104.0,60935.0,-26671.0,17466.0,44496.0,42271.0,-29450.0,-27217.0,33285.0,26064.0,-2943.0,37095.0,-21306.0,32568.0,2065.0,18043.0,28223.0,15970.0,28393.0,24790.0,-2166.0,-385.0,-1449.0,-264.0,-221.0,-220.0,-34.0,-766.0,1881.0,-1719.0,1545.0,281.0,204.0,1125.0,1745.0,20.0,-541.0,3881.0,-728.0,-1670.0,-996.0,-832.0,-1363.0,9114.0,-4450.0,-5889.0,-44389.0,-52370.0,112118.0,44371.0,146034.0,83104.0,99280.0,35948.0,101168.0,-20624.0,-43680.0,164321.0,121014.0,-101661.0,-34104.0,-23291.0,-58233.0,126926.0,128987.0,50378.0,-52755.0],[-20822.0,-33504.0,22344.0,-2714.0,-31076.0,-33750.0,-65852.0,26159.0,-27541.0,-28328.0,-19464.0,32554.0,68727.0,-65326.0,-32900.0,3660.0,-14022.0,43160.0,-37137.0,3294.0,-9318.0,-31718.0,-8780.0,-29024.0,-32536.0,6278.0,-710.0,5754.0,-486.0,3256.0,2010.0,-1226.0,5746.0,-1980.0,6389.0,-3477.0,-504.0,-140.0,-92.0,5406.0,-209.0,-337.0,6465.0,1791.0,470.0,341.0,3130.0,761.0,-2529.0,1475.0,25413.0,60760.0,37256.0,-70810.0,-19779.0,-28976.0,-20990.0,-40390.0,-64353.0,-40672.0,34728.0,41702.0,-95841.0,-71521.0,61587.0,1290.0,24825.0,37683.0,-102172.0,-56007.0,-49563.0,11513.0]],"im":[[-56532.0,-31611.0,28326.0,-41098.0,-44925.0,-52810.0,-39402.0,29195.0,-55174.0,-36425.0,0.0,98910.0,91091.0,8335.0,3804.0,38011.0,0.0,69733.0,-45489.0,37469.0,-89089.0,-64588.0,-109544.0,-46217.0,-30329.0,102120.0,113442.0,87750.0,96522.0,112002.0,61866.0,118644.0,97468.0,-19584.0,91320.0,85000.0,104432.0,-29838.0,43993.0,68534.0,25430.0,-34030.0,70977.0,-53298.0,11788.0,-29769.0,63509.0,49121.0,39386.0,26273.0,15578.0,-12048.0,18040.0,-13034.0,-33754.0,-22702.0,-48497.0,-42966.0,-78027.0,-89907.0,-23740.0,139614.0,-64219.0,-141954.0,199927.0,252065.0,277541.0,336777.0,-190636.0,-130284.0,-64717.0,352468.0],[39405.0,12830.0,353.0,21471.0,11020.0,6188.0,5334.0,3796.0,13435.0,-5756.0,748.0,-60715.0,-70324.0,1022.0,-12770.0,1137.0,4136.0,-41882.0,15564.0,5770.0,65259.0,37878.0,79971.0,17157.0,17939.0,-216770.0,-124722.0,-111022.0,-122276.0,-109016.0,-105480.0,-160522.0,-99383.0,33054.0,-85339.0,-219916.0,-132021.0,43020.0,-74391.0,-107530.0,-18228.0,44019.0,-197666.0,38881.0,46689.0,31906.0,-118188.0,-61303.0,-132655.0,3228.0,88838.0,-17976.0,-56993.0,32916.0,13650.0,38595.0,34638.0,16382.0,100284.0,35121.0,175266.0,-114469.0,24843.0,67420.0,-257064.0,-280338.0,-197021.0,-289743.0,218736.0,196189.0,75738.0,-174432.0],[-48923.0,-2051.0,46246.0,-54434.0,-31342.0,-31251.0,-70.0,42369.0,-49586.0,-12978.0,-2333.0,10040.0,13474.0,47285.0,50230.0,56781.0,1280.0,10459.0,-16950.0,40609.0,-23326.0,-13871.0,-21350.0,-1146.0,10255.0,-772.0,555.0,-2367.0,-240.0,307.0,180.0,102.0,-1334.0,949.0,-1032.0,-3425.0,-79.0,-1010.0,-531.0,-4440.0,-1515.0,-687.0,-4921.0,156.0,-222.0,878.0,-4764.0,-3190.0,-8778.0,-2274.0,-61869.0,61403.0,34206.0,-72020.0,92127.0,-89502.0,106274.0,-139852.0,116014.0,96957.0,-91288.0,115908.0,-116173.0,82173.0,11847.0,104001.0,105541.0,112103.0,55502.0,56649.0,-165986.0,112731.0],[38854.0,33592.0,-80058.0,18078.0,24888.0,28353.0,29896.0,-72662.0,27473.0,3300.0,14620.0,-13358.0,-32861.0,-70322.0,-66870.0,-52672.0,12843.0,-67376.0,5599.0,-58122.0,11622.0,8466.0,8629.0,-4278.0,150.0,-4024.0,-2169.0,103.0,912.0,-4520.0,-150.0,-722.0,970.0,-2910.0,-1639.0,7718.0,-824.0,112.0,-126.0,8592.0,-31.0,370.0,10599.0,817.0,510.0,-62.0,-730.0,136.0,11151.0,1550.0,73715.0,-46425.0,-6800.0,20250.0,-38220.0,16490.0,-40117.0,32075.0,-85693.0,-26560.0,147053.0,-77145.0,20838.0,-26427.0,-66969.0,-37860.0,-63870.0,-44539.0,-26142.0,-1309.0,58419.0,-68121.0]],"f":[2477000000.0,2450000000.0,2422000000.0,2471000000.0,2462000000.0,2461000000.0,2449000000.0,2423000000.0,2470000000.0,2456000000.0,2453000000.0,2404000000.0,2406000000.0,2440000000.0,2437000000.0,2432000000.0,2452000000.0,2413000000.0,2465000000.0,2433000000.0,2473000000.0,2466000000.0,2475000000.0,2459000000.0,2445000000.0,2414000000.0,2421000000.0,2411000000.0,2434000000.0,2420000000.0,2439000000.0,2430000000.0,2416000000.0,2460000000.0,2417000000.0,2408000000.0,2431000000.0,2463000000.0,2441000000.0,2412000000.0,2447000000.0,2464000000.0,2410000000.0,2478000000.0,2455000000.0,2467000000.0,2418000000.0,2438000000.0,2407000000.0,2444000000.0,2409000000.0,2443000000.0,2436000000.0,2474000000.0,2457000000.0,2472000000.0,2458000000.0,2476000000.0,2448000000.0,2454000000.0,2405000000.0,2435000000.0,2468000000.0,2451000000.0,2415000000.0,2428000000.0,2429000000.0,2424000000.0,2446000000.0,2442000000.0,2469000000.0,2419000000.0],"ch":[75,48,20,69,60,59,47,21,68,54,51,2,4,38,35,30,50,11,63,31,71,64,73,57,43,12,19,9,32,18,37,28,14,58,15,6,29,61,39,10,45,62,8,76,53,65,16,36,5,42,7,41,34,72,55,70,56,74,46,52,3,33,66,49,13,26,27,22,44,40,67,17],"t":[0.0007654999999999999,0.0014805,0.0021955,0.0029105,0.0036255000000000003,0.0043405,0.0050555,0.0057705,0.0064855,0.0072005,0.0079155,0.008630500000000001,0.009345500000000001,0.010060500000000002,0.0107755,0.0114905,0.012205500000000001,0.012920500000000001,0.013635500000000002,0.0143505,0.0150655,0.015780500000000003,0.016495500000000003,0.017210500000000004,0.017925500000000004,0.0589735,0.0596885,0.0604035,0.0611185,0.0618335,0.0625485,0.0632635,0.06397850000000001,0.0646935,0.06540850000000001,0.0661235,0.06683850000000001,0.0675535,0.06826850000000001,0.0689835,0.06969850000000001,0.0704135,0.07112850000000001,0.0718435,0.07255850000000001,0.0732735,0.0739885,0.0747035,0.07541850000000001,0.0761335,0.11718150000000001,0.1178965,0.11861150000000001,0.1193265,0.12004150000000001,0.1207565,0.12147150000000001,0.1221865,0.12290150000000001,0.1236165,0.12433150000000001,0.1250465,0.1257615,0.1264765,0.12719149999999999,0.1279065,0.1286215,0.1293365,0.1300515,0.13076649999999998,0.1314815,0.1321965],"se":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2],"tRef":0.06480045833333334,"name":"sample_log proc 7121","note":"data/sample_log.txt, mode0 483 us, 715 us steps, 40 ms subevent gap"};
+  const $ = (id) => document.getElementById(id);
+  const TAU = 2 * Math.PI;
+  const wrap = J.wrap;
+  const deg = (r) => (r * 180 / Math.PI);
+  const fmt = (x, d = 2) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(d);
+  const SHAPES = ["circle", "square", "triangle", "diamond"];
+
+  // ------------------------------------------------------------ state
+  const st = { src: "sim", v: 4.2, d: 6.5, snr: 20, K: 3, sc: "MP_mod", seed: 11, order: 2, path: 0 };
+  try { const s = JSON.parse(localStorage.getItem("jdps-viz") || "{}"); Object.assign(st, s); } catch (e) { /* ignore */ }
+  const save = () => { try { localStorage.setItem("jdps-viz", JSON.stringify(st)); } catch (e) { /* ignore */ } };
+  if (!LOG) st.src = "sim";
+
+  // ------------------------------------------------------------ mini chart lib (SVG)
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= n + 0.5) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + 1e-9 * step; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+    return out;
+  }
+  const NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function marker(g, shape, x, y, r, style) {
+    if (shape === "square") return el("rect", { x: x - r * 0.88, y: y - r * 0.88, width: r * 1.76, height: r * 1.76, style }, g);
+    if (shape === "triangle") return el("path", { d: `M${x},${y - r * 1.15}L${x + r},${y + r * 0.75}L${x - r},${y + r * 0.75}Z`, style }, g);
+    if (shape === "diamond") return el("path", { d: `M${x},${y - r * 1.2}L${x + r * 1.05},${y}L${x},${y + r * 1.2}L${x - r * 1.05},${y}Z`, style }, g);
+    return el("circle", { cx: x, cy: y, r, style }, g);
+  }
+  /**
+   * opts: {height, x:{min,max,label,ticks,fmt}, y:{...}, series:[{kind:'dots'|'line'|'step', data:[[x,y,tip?]], color, shape, r, width, dash, opacity, noTip}],
+   *        hlines:[{y,color,dash,label}], vlines:[{x,color,dash,label}], vbands:[{x0,x1}]}
+   */
+  function plot(host, o) {
+    host.innerHTML = "";
+    const W = Math.max(280, host.clientWidth || 480), H = o.height || 240;
+    const m = { l: 46, r: 12, t: 12, b: 34 };
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.aria || "" }, host);
+    const X = (v) => m.l + (v - o.x.min) / (o.x.max - o.x.min) * (W - m.l - m.r);
+    const Y = (v) => H - m.b - (v - o.y.min) / (o.y.max - o.y.min) * (H - m.t - m.b);
+    const grid = el("g", {}, svg);
+    const xt = o.x.ticks || niceTicks(o.x.min, o.x.max, Math.max(3, Math.floor(W / 90)));
+    const yt = o.y.ticks || niceTicks(o.y.min, o.y.max, 5);
+    yt.forEach((v) => {
+      el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), style: "stroke:var(--grid);stroke-width:1" }, grid);
+      el("text", { x: m.l - 6, y: Y(v) + 3.5, "text-anchor": "end" }, grid).textContent = o.y.fmt ? o.y.fmt(v) : +v.toFixed(3);
+    });
+    xt.forEach((v) => {
+      el("line", { x1: X(v), x2: X(v), y1: H - m.b, y2: H - m.b + 4, style: "stroke:var(--rule)" }, grid);
+      el("text", { x: X(v), y: H - m.b + 15, "text-anchor": "middle" }, grid).textContent = o.x.fmt ? o.x.fmt(v) : +v.toFixed(3);
+    });
+    el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, style: "stroke:var(--rule)" }, grid);
+    if (o.x.label) el("text", { x: W - m.r, y: H - 4, "text-anchor": "end" }, grid).textContent = o.x.label;
+    if (o.y.label) { const t = el("text", { x: 0, y: 0, "text-anchor": "middle", transform: `translate(11,${(H - m.b + m.t) / 2}) rotate(-90)` }, grid); t.textContent = o.y.label; }
+    (o.vbands || []).forEach((b) => el("rect", { x: X(b.x0), y: m.t, width: Math.max(0, X(b.x1) - X(b.x0)), height: H - m.t - m.b, style: "fill:var(--grid);opacity:.6" }, grid));
+    const clipId = "c" + Math.random().toString(36).slice(2);
+    const cp = el("clipPath", { id: clipId }, svg);
+    el("rect", { x: m.l, y: m.t - 6, width: W - m.l - m.r, height: H - m.t - m.b + 12 }, cp);
+    const plotG = el("g", { "clip-path": `url(#${clipId})` }, svg);
+    const pts = [];
+    (o.hlines || []).forEach((h) => {
+      el("line", { x1: m.l, x2: W - m.r, y1: Y(h.y), y2: Y(h.y), style: `stroke:${h.color || "var(--muted)"};stroke-width:1.25;stroke-dasharray:${h.dash || "none"}` }, plotG);
+      if (h.label) { const t = el("text", { x: W - m.r - 4, y: Y(h.y) - 4, "text-anchor": "end" }, svg); t.textContent = h.label; }
+    });
+    (o.vlines || []).forEach((v) => {
+      el("line", { x1: X(v.x), x2: X(v.x), y1: m.t, y2: H - m.b, style: `stroke:${v.color || "var(--muted)"};stroke-width:${v.width || 1.25};stroke-dasharray:${v.dash || "none"}` }, plotG);
+      if (v.label) { const t = el("text", { x: X(v.x) + (v.anchor === "end" ? -4 : 4), y: m.t + 10 + (v.dy || 0), "text-anchor": v.anchor || "start" }, svg); t.textContent = v.label; t.setAttribute("style", `fill:${v.textColor || "var(--ink-2)"}`); }
+    });
+    o.series.forEach((s) => {
+      if (s.kind === "line") {
+        let d = "", pen = false;
+        s.data.forEach((p) => {
+          if (p == null || !isFinite(p[1])) { pen = false; return; }
+          d += (pen ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1); pen = true;
+        });
+        el("path", { d, style: `fill:none;stroke:${s.color};stroke-width:${s.width || 2};stroke-dasharray:${s.dash || "none"};opacity:${s.opacity ?? 1};stroke-linejoin:round` }, plotG);
+        if (!s.noTip) s.data.forEach((p) => p && pts.push({ x: X(p[0]), y: Y(p[1]), tip: p[2], line: true }));
+      } else {
+        const r = s.r || 3.6;
+        s.data.forEach((p) => {
+          const sx = X(p[0]), sy = Y(p[1]);
+          marker(plotG, s.shape, sx, sy, r, `fill:${s.color};opacity:${s.opacity ?? 0.9};stroke:var(--panel);stroke-width:1`);
+          if (!s.noTip) pts.push({ x: sx, y: sy, tip: p[2] });
+        });
+      }
+    });
+    (o.marks || []).forEach((mk) => marker(svg, mk.shape || "circle", X(mk.x), Y(mk.y), mk.r || 5, `fill:${mk.color};stroke:var(--panel);stroke-width:2`));
+    // hover
+    const tip = document.createElement("div");
+    tip.className = "tip"; tip.hidden = true; host.appendChild(tip);
+    const cross = el("line", { y1: m.t, y2: H - m.b, style: "stroke:var(--ink-2);stroke-width:1;opacity:0" }, svg);
+    const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, style: "fill:transparent" }, svg);
+    const onMove = (ev) => {
+      const r = svg.getBoundingClientRect(), sc = W / r.width;
+      const px = (ev.clientX - r.left) * sc, py = (ev.clientY - r.top) * sc;
+      let best = null, bd = 1e9;
+      for (const p of pts) {
+        if (!p.tip) continue;
+        const dd = p.line ? Math.abs(p.x - px) * 1.0 + Math.abs(p.y - py) * 0.05 : Math.hypot(p.x - px, p.y - py);
+        if (dd < bd) { bd = dd; best = p; }
+      }
+      if (!best || bd > 40) { tip.hidden = true; cross.style.opacity = 0; return; }
+      tip.hidden = false; tip.textContent = best.tip;
+      tip.style.left = (best.x / sc) + "px"; tip.style.top = (best.y / sc) + "px";
+      if (best.line) { cross.setAttribute("x1", best.x); cross.setAttribute("x2", best.x); cross.style.opacity = 0.35; }
+    };
+    hit.addEventListener("pointermove", onMove);
+    hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.style.opacity = 0; });
+  }
+
+  function legendItem(label, color, shape, dash) {
+    const s = document.createElement("span");
+    const sv = el("svg", { viewBox: "0 0 14 10" });
+    if (shape === "line") el("line", { x1: 0, x2: 14, y1: 5, y2: 5, style: `stroke:${color};stroke-width:2;stroke-dasharray:${dash || "none"}` }, sv);
+    else marker(sv, shape, 7, 5, 3.6, `fill:${color}`);
+    s.appendChild(sv); s.appendChild(document.createTextNode(label));
+    return s;
+  }
+  function setLegend(node, items) { node.innerHTML = ""; items.forEach((i) => node.appendChild(legendItem(...i))); }
+  const seColor = (k) => `var(--se${k})`;
+
+  // ------------------------------------------------------------ data
+  function measurement() {
+    if (st.src === "log") {
+      return { y: { re: LOG.re, im: LOG.im }, f: LOG.f, ch: LOG.ch, t: LOG.t, se: LOG.se, tRef: LOG.tRef, name: LOG.name, truth: null };
+    }
+    const m = J.simulate({ seed: st.seed, K: st.K, A: 4, snrDb: st.snr, d0: st.d, v: st.v, scenario: st.sc });
+    m.name = "仿真";
+    return m;
+  }
+
+  // raw phase of y[a][n]; unmeasured (all-zero) samples are skipped
+  function displayPhase(y, a) {
+    return y.re[a].map((re, n) => (re === 0 && y.im[a][n] === 0) ? NaN : Math.atan2(y.im[a][n], re));
+  }
+
+  // ------------------------------------------------------------ render
+  function render() {
+    save();
+    syncControls();
+    const ms = measurement();
+    const res = J.jdps(ms, { orders: st.order === 1 ? [1] : [1, 2] });
+    const A = ms.y.re.length, K = res.K, N = ms.f.length;
+    const a = Math.min(st.path, A - 1);
+    const sim = !!ms.truth;
+    const tau = res.tau;
+    document.querySelectorAll(".pathno").forEach((n) => (n.textContent = a));
+
+    // genie (sim only)
+    let genie = null;
+    if (sim) genie = J.rotate(ms.y, (aa, n) => J.K_DOP * ms.f[n] * ms.truth.v * tau[n] - ms.truth.theta[ms.se[n]]);
+    const dBefore = J.estimateDistance(ms.y, ms.ch), dAfter = J.estimateDistance(res.y2, ms.ch), dDop = J.estimateDistance(res.y1, ms.ch);
+    const dGenie = genie ? J.estimateDistance(genie, ms.ch) : null;
+
+    renderSummary(ms, res, { dBefore, dAfter, dGenie, sim });
+    renderPipeline(ms, res, { dBefore, dAfter });
+
+    // legends
+    const seItems = Array.from({ length: K }, (_, k) => [`subevent ${k}（${ms.se.filter((s) => s === k).length} 步）`, seColor(k), SHAPES[k]]);
+    document.querySelectorAll('[data-legend="se"]').forEach((n) => setLegend(n, seItems));
+    document.querySelectorAll('[data-legend="pair"]').forEach((n) => setLegend(n, [["同一 subevent 内的对 (k = j)", "var(--cat-a)", "circle"], ["跨 subevent 的对 (k ≠ j)", "var(--cat-b)", "triangle"]]));
+    document.querySelectorAll('[data-legend="se-psi"]').forEach((n) => setLegend(n, Array.from({ length: K - 1 }, (_, i) => [`ψ${i + 1}`, seColor(i + 1), "line"]).concat(sim ? [["真值", "var(--muted)", "line", "4 3"]] : [])));
+
+    // ---- step 0
+    const tms = ms.t.map((t) => t * 1e3);
+    plot($("c-timeline"), {
+      height: 230, aria: "跳频时序",
+      x: { min: 0, max: Math.max(...tms) * 1.02, label: "时间 / ms" }, y: { min: 0, max: 78, label: "信道号", ticks: [0, 20, 40, 60, 78] },
+      series: Array.from({ length: K }, (_, k) => ({ kind: "dots", shape: SHAPES[k], color: seColor(k), r: 3,
+        data: ms.ch.map((c, n) => ms.se[n] === k ? [tms[n], c, `subevent ${k} · 第 ${n} 步\nt = ${tms[n].toFixed(2)} ms\n信道 ${c}（${2402 + c} MHz）`] : null).filter(Boolean) })),
+    });
+    const phRaw = displayPhase(ms.y, a);
+    phasePlot($("c-raw"), ms, phRaw, K, "原始");
+
+    // ---- step 1
+    renderGroups(ms, res, K);
+    const P = res.pairs.n.length;
+    // group coherent phase at vHat (path a)
+    const gph = groupPhase(res, a, res.vHat);
+    const pairData = (v) => {
+      const inside = [], cross = [];
+      for (let p = 0; p < P; p++) {
+        const zr = res.z.re[a][p], zi = res.z.im[a][p];
+        if (zr === 0 && zi === 0) continue;
+        const q = res.g[p], kk = ms.se[res.pairs.n[p]], jj = ms.se[res.pairs.m[p]];
+        const ph = wrap(Math.atan2(zi, zr) + v * res.alphaRed[p] - gph[q]);
+        const pt = [res.alphaRed[p], ph, `信道 ${ms.ch[res.pairs.n[p]]} → ${ms.ch[res.pairs.m[p]]}（o = ${res.pairs.o[p]}）\n组 (k=${kk}, j=${jj})  α = ${res.alphaRed[p].toFixed(3)}\n相位 ${ph.toFixed(2)} rad`];
+        (kk === jj ? inside : cross).push(pt);
+      }
+      return [inside, cross];
+    };
+    let amin = Infinity, amax = -Infinity;
+    res.alphaRed.forEach((x) => { amin = Math.min(amin, x); amax = Math.max(amax, x); });
+    const pad = (amax - amin) * 0.04 || 0.1;
+    [["c-pair0", 0], ["c-pair1", res.vHat]].forEach(([id, v]) => {
+      const [ins, crs] = pairData(v);
+      plot($(id), {
+        height: 230, aria: "配对相位",
+        x: { min: amin - pad, max: amax + pad, label: "α / (rad per m/s)" }, y: { min: -Math.PI, max: Math.PI, label: "相位 / rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
+        hlines: [{ y: 0, color: "var(--rule)" }],
+        series: [{ kind: "dots", data: ins, color: "var(--cat-a)", shape: "circle", r: 3 }, { kind: "dots", data: crs, color: "var(--cat-b)", shape: "triangle", r: 3.4 }],
+      });
+    });
+    const spread = (v) => { const [i, c] = pairData(v); const all = i.concat(c); let s = 0; all.forEach((p) => (s += Math.cos(p[1]))); return all.length ? s / all.length : 0; };
+    $("f1").innerHTML = `<span>配对数 <b>${P}</b>（o = 1: <b>${res.pairs.o.filter((x) => x === 1).length}</b>${st.order === 2 ? `，o = 2: <b>${res.pairs.o.filter((x) => x === 2).length}</b>` : ""}）</span>` +
+      `<span>分组数 <b>${res.G}</b>（PAIR_ORDER × K × K）</span>` +
+      `<span>路径 ${a} 的相位聚集度 mean cos：v = 0 时 <b>${spread(0).toFixed(2)}</b> → v̂ 时 <b>${spread(res.vHat).toFixed(2)}</b></span>`;
+
+    // ---- step 2
+    renderSpectrum(ms, res, sim);
+
+    // ---- step 3
+    phasePlot($("c-dop"), ms, displayPhase(res.y1, a), K, "多普勒补偿后");
+    renderSlope(ms, res, a, K);
+
+    // ---- step 4
+    renderPhaseEst(ms, res, K, sim);
+
+    // ---- step 5
+    phasePlot($("c-final"), ms, displayPhase(res.y2, a), K, "最终");
+    renderProfile(ms, res, genie, { dBefore, dAfter, dDop, dGenie, sim });
+  }
+
+  function phasePlot(host, ms, ph, K, what) {
+    plot(host, {
+      height: 240, aria: what + "相位",
+      x: { min: 0, max: 78, label: "信道号（2402 + n MHz）", ticks: [0, 10, 20, 30, 40, 50, 60, 70] }, y: { min: -Math.PI, max: Math.PI, label: "相位 / rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
+      series: Array.from({ length: K }, (_, k) => ({ kind: "dots", shape: SHAPES[k], color: seColor(k), r: 3.3,
+        data: ms.ch.map((c, n) => (ms.se[n] === k && isFinite(ph[n])) ? [c, ph[n], `信道 ${c} · subevent ${k}\n${what}相位 ${ph[n].toFixed(2)} rad`] : null).filter(Boolean) })),
+    });
+  }
+
+  function groupPhase(res, a, v) {
+    const r = new Float64Array(res.G), i = new Float64Array(res.G);
+    for (let p = 0; p < res.pairs.n.length; p++) {
+      const ph = v * res.alphaRed[p], c = Math.cos(ph), s = Math.sin(ph);
+      r[res.g[p]] += c * res.z.re[a][p] - s * res.z.im[a][p];
+      i[res.g[p]] += c * res.z.im[a][p] + s * res.z.re[a][p];
+    }
+    return Array.from(r, (x, q) => Math.atan2(i[q], x));
+  }
+
+  function renderGroups(ms, res, K) {
+    const host = $("m-groups");
+    host.innerHTML = "";
+    res.cfg.orders.forEach((o, oi) => {
+      const box = document.createElement("div");
+      let h = `<div class="cap">o = ${o}：各组配对数（行 k = 低信道所在 subevent，列 j = 高信道所在 subevent）</div><div class="tbl-wrap"><table><tr><th></th>`;
+      for (let j = 0; j < K; j++) h += `<th>j = ${j}</th>`;
+      h += "</tr>";
+      for (let k = 0; k < K; k++) {
+        h += `<tr><th>k = ${k}</th>`;
+        for (let j = 0; j < K; j++) {
+          const n = res.groupPairs[(oi * K + k) * K + j];
+          h += `<td style="background:rgba(var(--heat),${(0.08 + 0.5 * n / Math.max(1, ...res.groupPairs)).toFixed(2)})">${n}</td>`;
+        }
+        h += "</tr>";
+      }
+      box.innerHTML = h + "</table></div>";
+      host.appendChild(box);
+    });
+  }
+
+  function renderSpectrum(ms, res, sim) {
+    const grid = res.grid, M = res.metric;
+    const thr = res.mu + res.cfg.minScore * res.sigma;
+    const ymax = Math.max(...M, thr) * 1.08;
+    // faint per-group curves, each scaled to the total's peak so only their shapes are compared
+    const mMax = Math.max(...M);
+    const active = res.groupMetric.filter((gm) => gm.some((x) => x > 0));
+    const groupSeries = active.map((gm) => { const gmax = Math.max(...gm); return { kind: "line", color: "var(--before)", width: 1, opacity: 0.4, noTip: true, data: grid.map((v, j) => [v, gm[j] / gmax * mMax]) }; });
+    const vl = [{ x: res.vHat, color: res.vValid ? "var(--accent)" : "var(--bad)", width: 1.5, label: `v̂ = ${fmt(res.vHat)}`, anchor: "start" }];
+    if (sim) vl.push({ x: ms.truth.v, color: "var(--ink-2)", dash: "4 3", label: `真值 ${fmt(ms.truth.v)}`, dy: 14, anchor: "end" });
+    plot($("c-spec"), {
+      height: 280, aria: "速度谱",
+      x: { min: grid[0], max: grid[grid.length - 1], label: "v / (m/s)", ticks: [-10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10] }, y: { min: 0, max: ymax, label: "M(v)", fmt: (v) => v === 0 ? "0" : v.toExponential(0) },
+      vbands: [{ x0: grid[0], x1: -res.cfg.vMax }, { x0: res.cfg.vMax, x1: grid[grid.length - 1] }],
+      hlines: [{ y: res.mu, color: "var(--muted)", dash: "2 3", label: "噪声均值 μ" }, { y: thr, color: "var(--bad)", dash: "6 4", label: `门限 μ + ${res.cfg.minScore}σ` }],
+      vlines: vl,
+      series: groupSeries.concat([{ kind: "line", color: "var(--accent)", width: 2.2, data: grid.map((v, i) => [v, M[i], `v = ${fmt(v)} m/s\nM = ${M[i].toExponential(3)}\n(M − μ)/σ = ${((M[i] - res.mu) / res.sigma).toFixed(1)}`]) }]),
+      marks: [{ x: grid[res.kPeak], y: M[res.kPeak], color: res.vValid ? "var(--accent)" : "var(--bad)" }],
+    });
+    setLegend($("lg-spec"), [["M(v) 总和", "var(--accent)", "line"], ["各组谱（归一化）", "var(--before)", "line"], ["噪声均值 μ", "var(--muted)", "line", "2 3"], ["判决门限", "var(--bad)", "line", "6 4"]].concat(sim ? [["真实速度", "var(--ink-2)", "line", "4 3"]] : []));
+    const reason = res.status !== "ok" ? "没有有效配对（IQ 全 0）" : res.atEdge ? "峰值在搜索网格边缘" : res.score < res.cfg.minScore ? `score < ${res.cfg.minScore}` : "通过";
+    $("f2").innerHTML = `<span>v̂ <b>${fmt(res.vHat, 3)} m/s</b></span><span>score <b>${res.score.toFixed(1)}</b></span>` +
+      `<span>判决 <span class="pill ${res.vValid ? "ok" : "no"}">${res.vValid ? "✓ 有效" : "✕ 无效"}</span> <b style="font-family:var(--font-body);font-weight:400">${reason}</b></span>` +
+      `<span>补偿使用 v = <b>${fmt(res.vUsed, 3)} m/s</b></span>` + (sim ? `<span>速度误差 <b>${fmt(res.vHat - ms.truth.v, 3)} m/s</b></span>` : "");
+  }
+
+  function renderSlope(ms, res, a, K) {
+    // per subevent: phase step between consecutive time steps of the same tone neighbourhood is noisy;
+    // use the pair products inside each subevent instead: mean residual slope of ∠z vs α before / after compensation
+    const before = [], after = [];
+    for (let k = 0; k < K; k++) {
+      const pts0 = [], pts1 = [];
+      for (let p = 0; p < res.pairs.n.length; p++) {
+        if (ms.se[res.pairs.n[p]] !== k || ms.se[res.pairs.m[p]] !== k) continue;
+        const z0 = [res.z.re[a][p], res.z.im[a][p]], z1 = res.z1 ? [res.z1.re[a][p], res.z1.im[a][p]] : z0;
+        if (z0[0] === 0 && z0[1] === 0) continue;
+        const dt = (res.tau[res.pairs.m[p]] - res.tau[res.pairs.n[p]]) * 1e3;
+        pts0.push([dt, Math.atan2(z0[1], z0[0]), res.pairs.o[p]]);
+        pts1.push([dt, Math.atan2(z1[1], z1[0]), res.pairs.o[p]]);
+      }
+      before.push(pts0); after.push(pts1);
+    }
+    const flat = (sets) => {
+      const out = [];
+      sets.forEach((pts, k) => pts.forEach((p) => out.push({ k, dt: p[0], ph: p[1], o: p[2] })));
+      return out;
+    };
+    const b = flat(before), af = flat(after);
+    let tmax = 1; b.forEach((q) => (tmax = Math.max(tmax, Math.abs(q.dt))));
+    plot($("c-slope"), {
+      height: 240, aria: "subevent 内相位差",
+      x: { min: -tmax * 1.05, max: tmax * 1.05, label: "两信道测量时间差 Δt / ms" }, y: { min: -Math.PI, max: Math.PI, label: "∠z / rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
+      hlines: [{ y: 0, color: "var(--rule)" }],
+      series: [
+        { kind: "dots", shape: "circle", color: "var(--before)", r: 3, data: b.map((q) => [q.dt, q.ph, `补偿前 · subevent ${q.k} · o = ${q.o}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
+        { kind: "dots", shape: "diamond", color: "var(--accent)", r: 3.3, data: af.map((q) => [q.dt, q.ph, `补偿后 · subevent ${q.k} · o = ${q.o}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
+      ],
+    });
+    setLegend($("lg-slope"), [["补偿前（相位随 Δt 线性变化，斜率 ∝ v）", "var(--before)", "circle"], ["补偿后", "var(--accent)", "diamond"]]);
+  }
+
+  function renderPhaseEst(ms, res, K, sim) {
+    const host = $("m-H");
+    host.innerHTML = "";
+    if (K === 1 || !res.trace.length) {
+      host.innerHTML = `<p class="note">K = 1：只有一个 subevent，没有需要对齐的相位，这一步直接跳过（ψ₀ = 0）。</p>`;
+      $("c-iter").innerHTML = "<p class='note'>K = 1 时不做幂迭代。</p>";
+      $("t-psi").innerHTML = "";
+      $("psi-note").textContent = "";
+      return;
+    }
+    const last = res.trace[res.trace.length - 1];
+    let mx = 0;
+    for (let k = 0; k < K; k++) for (let j = 0; j < K; j++) if (k !== j) mx = Math.max(mx, Math.hypot(last.H.re[k][j], last.H.im[k][j]));
+    let h = `<div><div class="cap">第 3 轮的 H 矩阵：格内为 ∠H[k][j]（度），底色深浅为 |H|；对角线替换为偏移量</div><div class="tbl-wrap"><table><tr><th></th>`;
+    for (let j = 0; j < K; j++) h += `<th>j = ${j}</th>`;
+    h += "</tr>";
+    for (let k = 0; k < K; k++) {
+      h += `<tr><th>k = ${k}</th>`;
+      for (let j = 0; j < K; j++) {
+        if (k === j) { h += `<td style="color:var(--muted)">shift</td>`; continue; }
+        const mag = Math.hypot(last.H.re[k][j], last.H.im[k][j]), ang = Math.atan2(last.H.im[k][j], last.H.re[k][j]);
+        h += `<td style="background:rgba(var(--heat),${(0.06 + 0.5 * mag / (mx || 1)).toFixed(2)})">${deg(ang).toFixed(0)}°</td>`;
+      }
+      h += "</tr>";
+    }
+    h += `</table></div></div>`;
+    // expected ψj − ψk
+    h += `<div><div class="cap">由最终 ψ 预测的 ψ<sub>j</sub> − ψ<sub>k</sub>（度），应与左表一致</div><div class="tbl-wrap"><table><tr><th></th>`;
+    for (let j = 0; j < K; j++) h += `<th>j = ${j}</th>`;
+    h += "</tr>";
+    for (let k = 0; k < K; k++) {
+      h += `<tr><th>k = ${k}</th>`;
+      for (let j = 0; j < K; j++) h += k === j ? `<td style="color:var(--muted)">—</td>` : `<td>${deg(wrap(res.psi[j] - res.psi[k])).toFixed(0)}°</td>`;
+      h += "</tr>";
+    }
+    h += `</table></div></div>`;
+    // intercepts
+    h += `<div><div class="cap">截距 c（每路径 × 每个 o，rad）：初值 → 最终</div><div class="tbl-wrap"><table><tr><th>路径</th>${res.cfg.orders.map((o) => `<th>o = ${o}</th>`).join("")}</tr>`;
+    res.c.forEach((row, a) => { h += `<tr><td>${a}</td>${row.map((c, oi) => `<td class="mono">${res.cInit[a][oi].toFixed(2)} → ${c.toFixed(2)}</td>`).join("")}</tr>`; });
+    h += `</table></div></div>`;
+    host.innerHTML = h;
+
+    // convergence
+    const nP = res.cfg.nPowerIter, series = [];
+    const final = res.psi;
+    for (let k = 1; k < K; k++) {
+      const data = [[0, 0, `初值 ψ${k} = 0`]];
+      res.trace.forEach((tr, r) => tr.iters.forEach((p, t) => {
+        const x = r * nP + t + 1, val = final[k] + wrap(p[k] - final[k]);
+        data.push([x, val, `第 ${r + 1} 轮 · 第 ${t + 1} 次\nψ${k} = ${val.toFixed(3)} rad`]);
+      }));
+      series.push({ kind: "line", color: seColor(k), width: 2, data });
+      series.push({ kind: "dots", shape: SHAPES[k], color: seColor(k), r: 2.6, noTip: true, data: data.map((d) => [d[0], d[1]]) });
+    }
+    const hl = sim ? Array.from({ length: K - 1 }, (_, i) => ({ y: final[i + 1] + wrap(ms.truth.psi[i + 1] - final[i + 1]), color: seColor(i + 1), dash: "4 3" })) : [];
+    let lo = -0.5, hi = 0.5;
+    series.forEach((s) => s.data.forEach((d) => { lo = Math.min(lo, d[1]); hi = Math.max(hi, d[1]); }));
+    hl.forEach((x) => { lo = Math.min(lo, x.y); hi = Math.max(hi, x.y); });
+    const span = hi - lo;
+    plot($("c-iter"), {
+      height: 240, aria: "幂迭代收敛",
+      x: { min: 0, max: res.trace.length * nP, label: "迭代次数", ticks: Array.from({ length: res.trace.length + 1 }, (_, i) => i * nP) },
+      y: { min: lo - span * 0.08, max: hi + span * 0.08, label: "ψ / rad" },
+      vlines: res.trace.slice(0, -1).map((_, r) => ({ x: (r + 1) * nP, color: "var(--rule)" })),
+      hlines: hl, series,
+    });
+    // table
+    let t = `<table><tr><th>subevent</th><th>估计 ψ (rad)</th><th>估计 ψ (°)</th>${sim ? "<th>真值 (rad)</th><th>误差 (°)</th>" : ""}</tr>`;
+    for (let k = 0; k < K; k++) {
+      t += `<tr><td>${k}${k === 0 ? "（参考）" : ""}</td><td class="mono">${fmt(res.psi[k], 3)}</td><td class="mono">${fmt(deg(res.psi[k]), 1)}</td>`;
+      if (sim) t += `<td class="mono">${fmt(ms.truth.psi[k], 3)}</td><td class="mono">${fmt(deg(wrap(res.psi[k] - ms.truth.psi[k])), 1)}</td>`;
+      t += "</tr>";
+    }
+    $("t-psi").innerHTML = t + "</table>";
+    $("psi-note").textContent = sim
+      ? "仿真真值 = 两端 AGC 相位之和，以 subevent 0 为参考。速度有误差时，ψ 会把 subevent 间的残余多普勒一并吸收，所以真值对比只在速度准确时严格成立。"
+      : "实测数据没有真值；可以对照第 5 步的最终相位图，看各 subevent 是否落在同一条折叠直线上。";
+  }
+
+  function renderProfile(ms, res, genie, d) {
+    const dbOf = (y) => { const p = J.delayProfile(y, ms.ch); return p; };
+    const curves = [["补偿前", ms.y, "var(--before)", "", d.dBefore], ["仅多普勒补偿", res.y1, "var(--se3)", "2 3", d.dDop], ["JDPS 补偿后", res.y2, "var(--accent)", "", d.dAfter]];
+    if (genie) curves.push(["理想补偿（真值）", genie, "var(--ink-2)", "5 4", d.dGenie]);
+    const profs = curves.map((c) => dbOf(c[1]));
+    const ref = Math.max(...profs.map((p) => Math.max(...p.prof.slice(0, 220))));
+    const xmax = Math.max(25, Math.min(40, (d.sim ? ms.truth.d0 : d.dAfter) + 15));
+    const nmax = profs[0].dist.findIndex((x) => x > xmax);
+    plot($("c-prof"), {
+      height: 240, aria: "时延谱",
+      x: { min: 0, max: xmax, label: "距离 / m" }, y: { min: -30, max: 1, label: "功率 / dB" },
+      vlines: curves.map((c, i) => ({ x: c[4], color: c[2], dash: c[3] || "none", width: 1 })).concat(d.sim ? [{ x: ms.truth.d0, color: "var(--ink)", width: 1, label: `真实 ${ms.truth.d0.toFixed(2)} m`, anchor: "start" }] : []),
+      series: curves.map((c, i) => ({ kind: "line", color: c[2], dash: c[3], width: i === 2 ? 2.4 : 1.6,
+        data: profs[i].dist.slice(0, nmax).map((x, k) => [x, Math.max(-40, 10 * Math.log10(profs[i].prof[k] / ref + 1e-12)), `${c[0]}\n${x.toFixed(2)} m · ${(10 * Math.log10(profs[i].prof[k] / ref + 1e-12)).toFixed(1)} dB`]) })),
+    });
+    setLegend($("lg-prof"), curves.map((c) => [c[0], c[2], "line", c[3]]));
+    let t = `<table><tr><th>方案</th><th>首径距离 (m)</th>${d.sim ? "<th>误差 (m)</th>" : ""}<th>说明</th></tr>`;
+    const desc = ["直接 IFFT，不做任何补偿", "只用 v̂ 做第 3 步，不估 ψ", "完整 JDPS", "用真实 v 和真实 AGC 相位补偿"];
+    curves.forEach((c, i) => {
+      t += `<tr><td>${c[0]}</td><td class="mono">${c[4].toFixed(3)}</td>${d.sim ? `<td class="mono">${fmt(c[4] - ms.truth.d0, 3)}</td>` : ""}<td style="text-align:left;color:var(--ink-2)">${desc[i]}</td></tr>`;
+    });
+    $("t-dist").innerHTML = t + "</table>";
+  }
+
+  function renderSummary(ms, res, d) {
+    const k = [];
+    const valid = `<span class="pill ${res.vValid ? "ok" : "no"}">${res.vValid ? "✓ 有效" : "✕ 无效"}</span>`;
+    k.push(["数据", ms.name, d.sim ? `K = ${res.K} · ${ms.f.length} 步 · ${res.A} 路` : `${ms.f.length} 步 · K = ${res.K} · ${res.A} 路`]);
+    k.push(["估计速度 v̂", `${fmt(res.vHat, 2)} m/s`, `score ${res.score.toFixed(1)} ${valid}` + (d.sim ? ` · 真值 ${fmt(ms.truth.v, 2)}` : "")]);
+    const psiTxt = res.psi.slice(1).map((p) => fmt(p, 2)).join(" / ") || "—";
+    let psiSub = "rad，subevent 1…K−1 相对 0";
+    if (d.sim && res.K > 1) { const e = Math.max(...res.psi.map((p, i) => Math.abs(deg(wrap(p - ms.truth.psi[i]))))); psiSub = `最大误差 ${e.toFixed(1)}°`; }
+    k.push(["subevent 相位 ψ", psiTxt, psiSub]);
+    k.push(["测距：补偿前 → 后", `${d.dBefore.toFixed(2)} → ${d.dAfter.toFixed(2)} m`, d.sim ? `真值 ${ms.truth.d0.toFixed(2)} m · 误差 ${fmt(d.dBefore - ms.truth.d0)} → ${fmt(d.dAfter - ms.truth.d0)}` : "首径（−6 dB 门限）"]);
+    $("summary").innerHTML = k.map(([a, b, c]) => `<div class="kpi"><span class="k">${a}</span><span class="v">${b}</span><span class="s">${c}</span></div>`).join("");
+  }
+
+  function renderPipeline(ms, res, d) {
+    const steps = [
+      ["输入", `K = ${res.K} · ${ms.f.length} 步`],
+      ["配对分组", `${res.pairs.n.length} 对 · ${res.G} 组`],
+      ["速度搜索", `v̂ ${fmt(res.vHat, 2)} · ${res.vValid ? "有效" : "无效"}`],
+      ["多普勒补偿", `v = ${fmt(res.vUsed, 2)} m/s`],
+      ["相位估计", res.K > 1 ? `ψ ${res.psi.slice(1).map((p) => fmt(p, 2)).join(" ")}` : "K = 1，跳过"],
+      ["补偿与测距", `${d.dBefore.toFixed(2)} → ${d.dAfter.toFixed(2)} m`],
+    ];
+    $("pipeline").innerHTML = steps.map(([t, r], i) => `<a href="#s${i}"><span class="n">STEP ${i}</span><span class="t">${t}</span><span class="r">${r}</span></a>`).join("");
+  }
+
+  // ------------------------------------------------------------ controls
+  function syncControls() {
+    const segs = { src: st.src, K: String(st.K), order: String(st.order), path: String(st.path) };
+    for (const id in segs) $(id).querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === segs[id])));
+    $("src").querySelector('[data-v="log"]').disabled = !LOG;
+    document.querySelectorAll(".sim-only").forEach((n) => (n.hidden = st.src !== "sim"));
+    $("v").value = st.v; $("d").value = st.d; $("snr").value = st.snr; $("sc").value = st.sc; $("seed").value = st.seed;
+    $("v-o").textContent = fmt(+st.v, 1) + " m/s"; $("d-o").textContent = (+st.d).toFixed(1) + " m"; $("snr-o").textContent = st.snr + " dB";
+  }
+  let pending = 0;
+  const schedule = () => { cancelAnimationFrame(pending); pending = requestAnimationFrame(render); };
+  [["src", (v) => (st.src = v)], ["K", (v) => (st.K = +v)], ["order", (v) => (st.order = +v)], ["path", (v) => (st.path = +v)]].forEach(([id, set]) => {
+    $(id).addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b || b.disabled) return; set(b.dataset.v); schedule(); });
+  });
+  [["v", (x) => (st.v = +x)], ["d", (x) => (st.d = +x)], ["snr", (x) => (st.snr = +x)]].forEach(([id, set]) => $(id).addEventListener("input", (e) => { set(e.target.value); schedule(); }));
+  $("sc").addEventListener("change", (e) => { st.sc = e.target.value; schedule(); });
+  $("seed").addEventListener("change", (e) => { st.seed = Math.max(1, Math.round(+e.target.value) || 1); schedule(); });
+  $("reroll").addEventListener("click", () => { st.seed = 1 + Math.floor(Math.random() * 99999); schedule(); });
+  let rw = 0;
+  window.addEventListener("resize", () => { clearTimeout(rw); rw = setTimeout(render, 150); });
+  render();
+})();
+</script>
+</body>
+</html>

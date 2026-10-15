@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+c/subevent_motion_test_o*
+c/test/vectors.txt
+c/replay_dump
