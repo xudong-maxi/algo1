@@ -173,13 +173,12 @@ footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule);
           <li><b>AGC 相位</b>：每个 subevent 两端各选一次 AGC 档位，给这一段所有 IQ 乘上一个未知常数相位 θ<sub>k</sub>。4 条路径共用（AGC 按设备设置）。</li>
           <li><b>多普勒</b>：目标以速度 v 运动时，第 n 步的相位多出 −4π f<sub>n</sub> v τ<sub>n</sub> / c，随时间线性累积。subevent 之间 40 ms 的间隔把它放大成跳变。</li>
         </ul>
-        <p>右图把 IQ 按频率排开，并去掉距离对应的线性相位。理想情况下所有点连成一条平滑曲线；实际上每个 subevent 各自平移、倾斜，IFFT 看到的是被打乱的频响。</p>
+        <p>右图把 IQ 原始相位按频率排开（未做任何去斜率处理）。静止且没有 AGC 跳变时，相位随频率按 −4π d / c 的斜率线性变化（折叠到 ±π）；实际上每个 subevent 各自平移、倾斜，IFFT 看到的是被打乱的频响。</p>
       </div>
       <div class="figs">
         <figure><figcaption>跳频时序<span class="sub">每个点是一个 mode-2 步；横轴为测量时刻，纵轴为信道号</span></figcaption><div class="chart" id="c-timeline"></div><div class="legend" data-legend="se"></div></figure>
-        <figure><figcaption>原始相位 vs 频率（路径 <span class="pathno">0</span>）<span class="sub">已去掉 d<sub>ref</sub> 对应的线性相位，见下方说明</span></figcaption><div class="chart" id="c-raw"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>原始相位 vs 频率（路径 <span class="pathno">0</span>）<span class="sub">∠y，未去除距离对应的线性相位</span></figcaption><div class="chart" id="c-raw"></div><div class="legend" data-legend="se"></div></figure>
       </div>
-      <p class="note" id="dref-note"></p>
     </div>
   </section>
 
@@ -232,11 +231,11 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
       <div class="step-head"><h2>多普勒与距离迁移补偿</h2><span class="api">subevent_motion_add_phase_path 内部</span></div>
       <div class="explain">
         <div class="formula">y₁[n] = y[n] · exp(+j · 4π/c · f_n · v · τ_n)</div>
-        <p>同一个相位因子同时消除多普勒和距离迁移（目标在 τ 时间内移动 v·τ）。补偿后每个 subevent 内部变成平滑曲线，各段之间只差一个常数 ψ<sub>k</sub>（AGC 相位，加上速度估计误差在 subevent 间留下的残余）。</p>
+        <p>同一个相位因子同时消除多普勒和距离迁移（目标在 τ 时间内移动 v·τ）。补偿后每个 subevent 内部的相位只剩距离决定的线性斜率，各段之间只差一个常数 ψ<sub>k</sub>（AGC 相位，加上速度估计误差在 subevent 间留下的残余）。</p>
       </div>
       <div class="figs">
-        <figure><figcaption>多普勒补偿后的相位（路径 <span class="pathno">0</span>）<span class="sub">粗横线为各 subevent 的平均相位，与 subevent 0 的差就是待估的 ψ<sub>k</sub></span></figcaption><div class="chart" id="c-dop"></div><div class="legend" data-legend="se"></div></figure>
-        <figure><figcaption>补偿前后同一 subevent 内的相位斜率<span class="sub">每个 subevent 内相邻时刻的相位差，补偿后应在 0 附近</span></figcaption><div class="chart" id="c-slope"></div><div class="legend" id="lg-slope"></div></figure>
+        <figure><figcaption>多普勒补偿后的相位（路径 <span class="pathno">0</span>）<span class="sub">∠y₁；每个 subevent 内部的点各自落在同一斜率的直线上，各段之间的整体平移就是待估的 ψ<sub>k</sub></span></figcaption><div class="chart" id="c-dop"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>补偿前后同一 subevent 内的相位斜率<span class="sub">同一 subevent 内的配对 ∠z（未去截距）；补偿前随 Δt 倾斜，补偿后变成与 Δt 无关的常数（o = 1、2 各一个，由距离决定）</span></figcaption><div class="chart" id="c-slope"></div><div class="legend" id="lg-slope"></div></figure>
       </div>
     </div>
   </section>
@@ -271,7 +270,7 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
         <p>补偿后的 IQ 放回 1 MHz 网格（未测信道填 0），加 Hann 窗做 1024 点 IFFT，4 条路径非相干合并后找首径。</p>
       </div>
       <div class="figs">
-        <figure><figcaption>最终相位（路径 <span class="pathno">0</span>）<span class="sub">各 subevent 应接成一条连续曲线</span></figcaption><div class="chart" id="c-final"></div><div class="legend" data-legend="se"></div></figure>
+        <figure><figcaption>最终相位（路径 <span class="pathno">0</span>）<span class="sub">∠y₂；各 subevent 应落在同一条（折叠的）直线上</span></figcaption><div class="chart" id="c-final"></div><div class="legend" data-legend="se"></div></figure>
         <figure><figcaption>时延谱（4 路非相干）<span class="sub">竖线为首径检测结果</span></figcaption><div class="chart" id="c-prof"></div><div class="legend" id="lg-prof"></div></figure>
       </div>
       <div class="tbl-wrap" id="t-dist"></div>
@@ -428,21 +427,9 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
     return m;
   }
 
-  // phase of y[a][n] after removing the distance slope (round trip) and a common constant
-  function displayPhase(y, a, f, dref, rot) {
-    return f.map((fn, n) => {
-      const re = y.re[a][n], im = y.im[a][n];
-      if (re === 0 && im === 0) return NaN;
-      return wrap(Math.atan2(im, re) + 4 * Math.PI * fn * dref / J.C - rot);
-    });
-  }
-  function commonRot(y, a, f, dref) {
-    let r = 0, i = 0;
-    f.forEach((fn, n) => {
-      const p = 4 * Math.PI * fn * dref / J.C, c = Math.cos(p), s = Math.sin(p);
-      r += y.re[a][n] * c - y.im[a][n] * s; i += y.re[a][n] * s + y.im[a][n] * c;
-    });
-    return Math.atan2(i, r);
+  // raw phase of y[a][n]; unmeasured (all-zero) samples are skipped
+  function displayPhase(y, a) {
+    return y.re[a].map((re, n) => (re === 0 && y.im[a][n] === 0) ? NaN : Math.atan2(y.im[a][n], re));
   }
 
   // ------------------------------------------------------------ render
@@ -462,14 +449,6 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
     if (sim) genie = J.rotate(ms.y, (aa, n) => J.K_DOP * ms.f[n] * ms.truth.v * tau[n] - ms.truth.theta[ms.se[n]]);
     const dBefore = J.estimateDistance(ms.y, ms.ch), dAfter = J.estimateDistance(res.y2, ms.ch), dDop = J.estimateDistance(res.y1, ms.ch);
     const dGenie = genie ? J.estimateDistance(genie, ms.ch) : null;
-    // distance used to flatten the phase plots: strongest path of the compensated profile (same for every stage)
-    const pr2 = J.delayProfile(res.y2, ms.ch);
-    let pk = 0; for (let i = 1; i < 120; i++) if (pr2.prof[i] > pr2.prof[pk]) pk = i;
-    const dref = sim ? ms.truth.d0 : pr2.dist[pk];
-    const rot = commonRot(res.y2, a, ms.f, dref);
-    $("dref-note").textContent = sim
-      ? `相位图的显示方式：每个点乘以 exp(+j·4π f d_ref / c)，d_ref = ${dref.toFixed(2)} m（仿真真实 LOS 距离），再减去一个公共常数。只为方便观察，不参与计算。`
-      : `相位图的显示方式：每个点乘以 exp(+j·4π f d_ref / c)，d_ref = ${dref.toFixed(2)} m（补偿后时延谱最强径），再减去一个公共常数。只为方便观察，不参与计算。`;
 
     renderSummary(ms, res, { dBefore, dAfter, dGenie, sim });
     renderPipeline(ms, res, { dBefore, dAfter });
@@ -488,7 +467,7 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
       series: Array.from({ length: K }, (_, k) => ({ kind: "dots", shape: SHAPES[k], color: seColor(k), r: 3,
         data: ms.ch.map((c, n) => ms.se[n] === k ? [tms[n], c, `subevent ${k} · 第 ${n} 步\nt = ${tms[n].toFixed(2)} ms\n信道 ${c}（${2402 + c} MHz）`] : null).filter(Boolean) })),
     });
-    const phRaw = displayPhase(ms.y, a, ms.f, dref, rot);
+    const phRaw = displayPhase(ms.y, a);
     phasePlot($("c-raw"), ms, phRaw, K, "原始");
 
     // ---- step 1
@@ -529,28 +508,21 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
     renderSpectrum(ms, res, sim);
 
     // ---- step 3
-    const phDop = displayPhase(res.y1, a, ms.f, dref, rot);
-    const means = Array.from({ length: K }, (_, k) => {
-      let r = 0, i = 0;
-      phDop.forEach((p, n) => { if (ms.se[n] === k && isFinite(p)) { r += Math.cos(p); i += Math.sin(p); } });
-      return Math.atan2(i, r);
-    });
-    phasePlot($("c-dop"), ms, phDop, K, "多普勒补偿后", means);
-    renderSlope(ms, res, a, K, dref);
+    phasePlot($("c-dop"), ms, displayPhase(res.y1, a), K, "多普勒补偿后");
+    renderSlope(ms, res, a, K);
 
     // ---- step 4
     renderPhaseEst(ms, res, K, sim);
 
     // ---- step 5
-    phasePlot($("c-final"), ms, displayPhase(res.y2, a, ms.f, dref, rot), K, "最终");
+    phasePlot($("c-final"), ms, displayPhase(res.y2, a), K, "最终");
     renderProfile(ms, res, genie, { dBefore, dAfter, dDop, dGenie, sim });
   }
 
-  function phasePlot(host, ms, ph, K, what, means) {
+  function phasePlot(host, ms, ph, K, what) {
     plot(host, {
       height: 240, aria: what + "相位",
       x: { min: 0, max: 78, label: "信道号（2402 + n MHz）", ticks: [0, 10, 20, 30, 40, 50, 60, 70] }, y: { min: -Math.PI, max: Math.PI, label: "相位 / rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
-      hlines: (means || []).map((m, k) => ({ y: m, color: seColor(k), dash: "6 4" })),
       series: Array.from({ length: K }, (_, k) => ({ kind: "dots", shape: SHAPES[k], color: seColor(k), r: 3.3,
         data: ms.ch.map((c, n) => (ms.se[n] === k && isFinite(ph[n])) ? [c, ph[n], `信道 ${c} · subevent ${k}\n${what}相位 ${ph[n].toFixed(2)} rad`] : null).filter(Boolean) })),
     });
@@ -613,10 +585,9 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
       `<span>补偿使用 v = <b>${fmt(res.vUsed, 3)} m/s</b></span>` + (sim ? `<span>速度误差 <b>${fmt(res.vHat - ms.truth.v, 3)} m/s</b></span>` : "");
   }
 
-  function renderSlope(ms, res, a, K, dref) {
+  function renderSlope(ms, res, a, K) {
     // per subevent: phase step between consecutive time steps of the same tone neighbourhood is noisy;
     // use the pair products inside each subevent instead: mean residual slope of ∠z vs α before / after compensation
-    const rows = [];
     const before = [], after = [];
     for (let k = 0; k < K; k++) {
       const pts0 = [], pts1 = [];
@@ -630,25 +601,20 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
       }
       before.push(pts0); after.push(pts1);
     }
-    // remove the per-order intercept (distance term) so the plot shows only the time-dependent part
-    const center = (sets) => {
+    const flat = (sets) => {
       const out = [];
       sets.forEach((pts, k) => pts.forEach((p) => out.push({ k, dt: p[0], ph: p[1], o: p[2] })));
-      [1, 2].forEach((o) => {
-        let r = 0, i = 0; out.filter((q) => q.o === o).forEach((q) => { r += Math.cos(q.ph); i += Math.sin(q.ph); });
-        const c = Math.atan2(i, r); out.filter((q) => q.o === o).forEach((q) => (q.ph = wrap(q.ph - c)));
-      });
       return out;
     };
-    const b = center(before), af = center(after);
+    const b = flat(before), af = flat(after);
     let tmax = 1; b.forEach((q) => (tmax = Math.max(tmax, Math.abs(q.dt))));
     plot($("c-slope"), {
       height: 240, aria: "subevent 内相位差",
-      x: { min: -tmax * 1.05, max: tmax * 1.05, label: "两信道测量时间差 Δt / ms" }, y: { min: -Math.PI, max: Math.PI, label: "∠z（去截距）/ rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
+      x: { min: -tmax * 1.05, max: tmax * 1.05, label: "两信道测量时间差 Δt / ms" }, y: { min: -Math.PI, max: Math.PI, label: "∠z / rad", ticks: [-3, -2, -1, 0, 1, 2, 3] },
       hlines: [{ y: 0, color: "var(--rule)" }],
       series: [
-        { kind: "dots", shape: "circle", color: "var(--before)", r: 3, data: b.map((q) => [q.dt, q.ph, `补偿前 · subevent ${q.k}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
-        { kind: "dots", shape: "diamond", color: "var(--accent)", r: 3.3, data: af.map((q) => [q.dt, q.ph, `补偿后 · subevent ${q.k}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
+        { kind: "dots", shape: "circle", color: "var(--before)", r: 3, data: b.map((q) => [q.dt, q.ph, `补偿前 · subevent ${q.k} · o = ${q.o}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
+        { kind: "dots", shape: "diamond", color: "var(--accent)", r: 3.3, data: af.map((q) => [q.dt, q.ph, `补偿后 · subevent ${q.k} · o = ${q.o}\nΔt = ${q.dt.toFixed(2)} ms\n∠z = ${q.ph.toFixed(2)} rad`]) },
       ],
     });
     setLegend($("lg-slope"), [["补偿前（相位随 Δt 线性变化，斜率 ∝ v）", "var(--before)", "circle"], ["补偿后", "var(--accent)", "diamond"]]);
@@ -730,7 +696,7 @@ score = (max M − μ) / σ,   μ = Σ √(π/4 · S_g),   σ² = Σ (1 − π/4
     $("t-psi").innerHTML = t + "</table>";
     $("psi-note").textContent = sim
       ? "仿真真值 = 两端 AGC 相位之和，以 subevent 0 为参考。速度有误差时，ψ 会把 subevent 间的残余多普勒一并吸收，所以真值对比只在速度准确时严格成立。"
-      : "实测数据没有真值；可以对照第 5 步的最终相位图，看各 subevent 是否接成一条连续曲线。";
+      : "实测数据没有真值；可以对照第 5 步的最终相位图，看各 subevent 是否落在同一条折叠直线上。";
   }
 
   function renderProfile(ms, res, genie, d) {
